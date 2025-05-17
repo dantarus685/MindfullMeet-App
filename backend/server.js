@@ -50,7 +50,7 @@ const startServer = async () => {
     
     // Then sync all models
     console.log('Creating tables...');
-    await db.sequelize.sync({ force: false });    
+    await db.sequelize.sync(); // no force = just create if not exists
     console.log('All models were synchronized successfully.');
     
     server.listen(PORT, () => {
