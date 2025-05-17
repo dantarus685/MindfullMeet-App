@@ -6,7 +6,12 @@ const { validationResult } = require('express-validator');
 
 // Generate JWT Token
 const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+  const secret = process.env.JWT_SECRET || 'temporary-dev-secret-DO-NOT-USE-IN-PRODUCTION';
+  if (!process.env.JWT_SECRET) {
+    console.warn('WARNING: Using fallback JWT_SECRET. Set proper environment variables for production!');
+  }
+  
+  return jwt.sign({ id: userId }, secret, {
     expiresIn: process.env.JWT_EXPIRES_IN || '90d'
   });
 };

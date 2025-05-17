@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -12,20 +13,25 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useDispatch, useSelector } from 'react-redux';
 import TextInput from '../../components/common/TextInput';
 import { useTheme } from '../../constants/theme';
+import { clearError } from '../../redux/authSlice';
+import axios from 'axios';
+import api, { API_URL } from '../../config/api'; // Import the configured api instance
+
+// Configure your API base URL
 
 const SignupScreen = () => {
   const { colors, typography, spacing, effects } = useTheme();
+  const dispatch = useDispatch();
+  const { isLoading, error, isAuthenticated } = useSelector(state => state.auth);
   
-  const isLoading = false;
-  const error = null;
-
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
+    passwordConfirm: '', // Renamed to match your API
     bio: '',
   });
   
@@ -33,6 +39,19 @@ const SignupScreen = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Clear previous errors when component mounts
+  useEffect(() => {
+    dispatch(clearError());
+  }, [dispatch]);
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/(tabs)');
+    }
+  }, [isAuthenticated]);
 
   const handleChange = (field, value) => {
     setFormData({ ...formData, [field]: value });
@@ -76,27 +95,27 @@ const SignupScreen = () => {
       case 'password':
         if (!value) {
           newErrors.password = 'Password is required';
-        } else if (value.length < 6) {
-          newErrors.password = 'Password must be at least 6 characters';
+        } else if (value.length < 8) { // Updated to match your backend validation
+          newErrors.password = 'Password must be at least 8 characters';
         } else {
           newErrors.password = '';
         }
         
-        // Also validate confirm password if it has been entered
-        if (formData.confirmPassword && formData.confirmPassword !== value) {
-          newErrors.confirmPassword = 'Passwords do not match';
-        } else if (formData.confirmPassword) {
-          newErrors.confirmPassword = '';
+        // Also validate passwordConfirm if it has been entered
+        if (formData.passwordConfirm && formData.passwordConfirm !== value) {
+          newErrors.passwordConfirm = 'Password confirmation does not match password';
+        } else if (formData.passwordConfirm) {
+          newErrors.passwordConfirm = '';
         }
         break;
         
-      case 'confirmPassword':
+      case 'passwordConfirm':
         if (!value) {
-          newErrors.confirmPassword = 'Please confirm your password';
+          newErrors.passwordConfirm = 'Please confirm your password';
         } else if (value !== formData.password) {
-          newErrors.confirmPassword = 'Passwords do not match';
+          newErrors.passwordConfirm = 'Password confirmation does not match password';
         } else {
-          newErrors.confirmPassword = '';
+          newErrors.passwordConfirm = '';
         }
         break;
         
@@ -105,40 +124,108 @@ const SignupScreen = () => {
     }
     
     setErrors(newErrors);
+    return !newErrors[field]; // Return true if valid, false if invalid
   };
 
   const validateForm = () => {
     const touchedFields = {};
+    let isValid = true;
     
     // Mark all fields as touched
     Object.keys(formData).forEach(field => {
-      touchedFields[field] = true;
-      validateField(field, formData[field]);
+      if (field !== 'bio') { // Skip optional fields
+        touchedFields[field] = true;
+        const fieldIsValid = validateField(field, formData[field]);
+        if (!fieldIsValid) isValid = false;
+      }
     });
     
     setTouched(touchedFields);
-    
-    // Check if there are any errors
-    return !Object.values(errors).some(error => error);
+    return isValid;
   };
 
-  const handleSignup = () => {
-    if (validateForm()) {
-      // For now, just show alert and navigate to login
+// In the handleSignup function, update the error handling part:
+const handleSignup = async () => {
+  if (validateForm()) {
+    setIsSubmitting(true);
+    
+    try {
+      console.log('Sending signup request to:', `${API_URL}/auth/signup`);
+      console.log('With data:', { ...formData, password: '****', passwordConfirm: '****' });
+      
+      // Make API call to your actual backend
+      const response = await axios.post(`${API_URL}/auth/signup`, formData);
+      
+      console.log('Signup successful:', response.data);
+      setIsSubmitting(false);
+      
+      // Show success message and navigate to login
       Alert.alert(
         'Success!',
         'Account created successfully. Please log in.',
-        [
-          { 
-            text: 'OK', 
-            onPress: () => router.push('/auth/login') 
+        [{ 
+          text: 'OK', 
+          onPress: () => {
+            console.log('Direct navigation to login screen');
+            
+            // Try navigating directly to the file path (more reliable with Expo Router)
+            try {
+              window.location.href = '/auth/login';
+            } catch (e) {
+              console.error('Direct navigation failed:', e);
+              router.push('/auth/login');
+            }
           }
-        ]
+        }]
       );
-    } else {
-      Alert.alert('Error', 'Please fix the errors in the form');
+      
+    } catch (err) {
+      console.error('Signup error:', err);
+      setIsSubmitting(false);
+      
+      // Handle different types of errors
+      if (err.response) {
+        console.log('Server response error data:', err.response.data);
+        
+        // Handle validation errors from your API
+        const serverErrors = err.response.data.errors || err.response.data.error;
+        
+        if (Array.isArray(serverErrors)) {
+          // Handle express-validator errors format
+          const newErrors = {};
+          
+          serverErrors.forEach(error => {
+            newErrors[error.param] = error.msg;
+          });
+          
+          setErrors(newErrors);
+          setTouched({
+            name: true,
+            email: true,
+            password: true,
+            passwordConfirm: true
+          });
+          
+          Alert.alert('Validation Error', serverErrors[0]?.msg || 'Please check the form for errors');
+        } else {
+          // Handle generic error message
+          Alert.alert('Error', 
+            err.response.data.message || 
+            err.response.data.error || 
+            'Signup failed');
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        Alert.alert('Network Error', 'Please check your connection');
+      } else {
+        // Something else happened while setting up the request
+        Alert.alert('Error', err.message || 'An error occurred during signup');
+      }
     }
-  };
+  } else {
+    Alert.alert('Form Error', 'Please fix the errors in the form');
+  }
+};
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
@@ -211,6 +298,9 @@ const SignupScreen = () => {
       alignItems: 'center',
       marginBottom: spacing.lg,
     },
+    buttonDisabled: {
+      backgroundColor: colors.grey,
+    },
     buttonText: {
       color: colors.white,
       fontSize: typography.fontSizes.md,
@@ -278,11 +368,13 @@ const SignupScreen = () => {
               value={formData.name}
               onChangeText={(text) => handleChange('name', text)}
               onBlur={() => handleBlur('name')}
-              error={errors.name}
-              touched={touched.name}
+              error={touched.name && errors.name ? errors.name : null}
               icon="person-outline"
               autoCapitalize="words"
             />
+            {touched.name && errors.name ? (
+              <Text style={styles.errorText}>{errors.name}</Text>
+            ) : null}
           </View>
           
           <View style={styles.inputContainer}>
@@ -292,12 +384,14 @@ const SignupScreen = () => {
               value={formData.email}
               onChangeText={(text) => handleChange('email', text)}
               onBlur={() => handleBlur('email')}
-              error={errors.email}
-              touched={touched.email}
+              error={touched.email && errors.email ? errors.email : null}
               icon="mail-outline"
               keyboardType="email-address"
               autoCapitalize="none"
             />
+            {touched.email && errors.email ? (
+              <Text style={styles.errorText}>{errors.email}</Text>
+            ) : null}
           </View>
           
           <View style={styles.inputContainer}>
@@ -307,8 +401,7 @@ const SignupScreen = () => {
               value={formData.password}
               onChangeText={(text) => handleChange('password', text)}
               onBlur={() => handleBlur('password')}
-              error={errors.password}
-              touched={touched.password}
+              error={touched.password && errors.password ? errors.password : null}
               secureTextEntry={!showPassword}
               icon="lock-closed-outline"
             />
@@ -322,17 +415,19 @@ const SignupScreen = () => {
                 color={colors.grey} 
               />
             </TouchableOpacity>
+            {touched.password && errors.password ? (
+              <Text style={styles.errorText}>{errors.password}</Text>
+            ) : null}
           </View>
           
           <View style={styles.inputContainer}>
             <TextInput
               label="Confirm Password"
               placeholder="Confirm your password"
-              value={formData.confirmPassword}
-              onChangeText={(text) => handleChange('confirmPassword', text)}
-              onBlur={() => handleBlur('confirmPassword')}
-              error={errors.confirmPassword}
-              touched={touched.confirmPassword}
+              value={formData.passwordConfirm}
+              onChangeText={(text) => handleChange('passwordConfirm', text)}
+              onBlur={() => handleBlur('passwordConfirm')}
+              error={touched.passwordConfirm && errors.passwordConfirm ? errors.passwordConfirm : null}
               secureTextEntry={!showConfirmPassword}
               icon="lock-closed-outline"
             />
@@ -346,6 +441,9 @@ const SignupScreen = () => {
                 color={colors.grey} 
               />
             </TouchableOpacity>
+            {touched.passwordConfirm && errors.passwordConfirm ? (
+              <Text style={styles.errorText}>{errors.passwordConfirm}</Text>
+            ) : null}
           </View>
           
           <View style={styles.inputContainer}>
@@ -362,13 +460,15 @@ const SignupScreen = () => {
         </View>
         
         <TouchableOpacity 
-          style={styles.button}
+          style={[styles.button, (isSubmitting || isLoading) && styles.buttonDisabled]}
           onPress={handleSignup}
-          disabled={isLoading}
+          disabled={isSubmitting || isLoading}
         >
-          <Text style={styles.buttonText}>
-            {isLoading ? 'Creating Account...' : 'Create Account'}
-          </Text>
+          {isSubmitting || isLoading ? (
+            <ActivityIndicator color={colors.white} />
+          ) : (
+            <Text style={styles.buttonText}>Create Account</Text>
+          )}
         </TouchableOpacity>
         
         <View style={styles.footer}>

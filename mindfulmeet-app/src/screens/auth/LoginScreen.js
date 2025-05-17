@@ -1,15 +1,119 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../constants/theme';
 import TextInput from '../../components/common/TextInput';
+import { useDispatch, useSelector } from 'react-redux';
+import { loginStart, loginSuccess, loginFailure, clearError } from '../../redux/authSlice';
+import api, { API_URL } from '../../config/api'; // Import the configured api instance
+import AsyncStorage from '@react-native-async-storage/async-storage'; // For token storage
+import axios from 'axios';
+
+// Configure your API base URL
 
 const LoginScreen = () => {
   const { colors, typography, spacing } = useTheme();
+  const dispatch = useDispatch();
+  const { isLoading, error, isAuthenticated } = useSelector(state => state.auth);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
+
+  // Clear previous errors when component mounts
+  useEffect(() => {
+    dispatch(clearError());
+  }, [dispatch]);
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isAuthenticated]);
+
+  // Show alert when error changes
+  useEffect(() => {
+    if (error) {
+      Alert.alert('Login Failed', error);
+    }
+  }, [error]);
+
+  const validateForm = () => {
+    const errors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email.trim()) {
+      errors.email = 'Email is required';
+    } else if (!emailRegex.test(email)) {
+      errors.email = 'Please enter a valid email';
+    }
+
+    if (!password) {
+      errors.password = 'Password is required';
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+const handleLogin = async () => {
+  if (!validateForm()) {
+    return;
+  }
+
+  try {
+    console.log('Starting login process...');
+    dispatch(loginStart());
+    
+    // Make the actual API call
+    const response = await axios.post(`${API_URL}/auth/login`, {
+      email,
+      password
+    });
+    
+    console.log('Login API response:', response.data);
+    
+    // API success - dispatch loginSuccess with the response data
+    const userData = {
+      user: response.data.user,
+      token: response.data.token
+    };
+    
+    // Store the token for future API calls
+    axios.defaults.headers.common['Authorization'] = `Bearer ${userData.token}`;
+    
+    // Save to AsyncStorage for persistence (you should add this)
+    // await AsyncStorage.setItem('auth_token', userData.token);
+    // await AsyncStorage.setItem('auth_user', JSON.stringify(userData.user));
+    
+    dispatch(loginSuccess(userData));
+    console.log('Login success dispatched');
+    
+    // Navigate to home immediately (no need for timeout)
+    router.navigate('/(tabs)');
+    
+  } catch (err) {
+    console.error('Login error:', err);
+    
+    // Handle different types of errors
+    if (err.response) {
+      // The request was made and the server responded with a status code outside of 2xx
+      const errorMessage = err.response.data.error || 
+                           err.response.data.message || 
+                           'Invalid credentials';
+      dispatch(loginFailure(errorMessage));
+    } else if (err.request) {
+      // The request was made but no response was received
+      dispatch(loginFailure('Network error. Please check your connection.'));
+    } else {
+      // Something happened in setting up the request
+      dispatch(loginFailure(err.message || 'Login failed'));
+    }
+  }
+};
 
   const styles = StyleSheet.create({
     container: {
@@ -75,6 +179,9 @@ const LoginScreen = () => {
       alignItems: 'center',
       marginBottom: spacing.lg,
     },
+    buttonDisabled: {
+      backgroundColor: colors.grey,
+    },
     buttonText: {
       color: colors.white,
       fontSize: typography.fontSizes.md,
@@ -93,6 +200,11 @@ const LoginScreen = () => {
       color: colors.primary,
       fontWeight: typography.fontWeights.bold,
       marginLeft: spacing.xs,
+    },
+    errorText: {
+      color: colors.error,
+      fontSize: typography.fontSizes.sm,
+      marginTop: 5,
     },
   });
 
@@ -124,11 +236,20 @@ const LoginScreen = () => {
           <TextInput
             placeholder="Email Address"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(text) => {
+              setEmail(text);
+              if (formErrors.email) {
+                setFormErrors({...formErrors, email: ''});
+              }
+            }}
             keyboardType="email-address"
             autoCapitalize="none"
             icon="mail-outline"
+            error={formErrors.email}
           />
+          {formErrors.email ? (
+            <Text style={styles.errorText}>{formErrors.email}</Text>
+          ) : null}
         </View>
         
         <View style={styles.inputContainer}>
@@ -136,9 +257,15 @@ const LoginScreen = () => {
             <TextInput
               placeholder="Password"
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(text) => {
+                setPassword(text);
+                if (formErrors.password) {
+                  setFormErrors({...formErrors, password: ''});
+                }
+              }}
               secureTextEntry={!showPassword}
               icon="lock-closed-outline"
+              error={formErrors.password}
             />
             <TouchableOpacity 
               style={styles.passwordToggle} 
@@ -151,6 +278,9 @@ const LoginScreen = () => {
               />
             </TouchableOpacity>
           </View>
+          {formErrors.password ? (
+            <Text style={styles.errorText}>{formErrors.password}</Text>
+          ) : null}
         </View>
         
         <TouchableOpacity
@@ -161,10 +291,15 @@ const LoginScreen = () => {
         </TouchableOpacity>
         
         <TouchableOpacity
-          style={styles.button}
-          onPress={() => console.log('Login pressed')}
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={isLoading}
         >
-          <Text style={styles.buttonText}>Login</Text>
+          {isLoading ? (
+            <ActivityIndicator color={colors.white} />
+          ) : (
+            <Text style={styles.buttonText}>Login</Text>
+          )}
         </TouchableOpacity>
         
         <View style={styles.signupContainer}>
