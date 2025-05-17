@@ -7,7 +7,8 @@ import {
   ScrollView, 
   TouchableOpacity, 
   SafeAreaView,
-  FlatList
+  FlatList,
+  useColorScheme
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../src/constants/theme';
@@ -95,10 +96,10 @@ const forYou = [
     type: 'seminar'
   }
 ];
-
-// Event Card Component
+// Event Card Component// Fixed EventCard Component
+// Fixed EventCard Component
 const EventCard = ({ event, size = 'large' }) => {
-  const { colors, spacing, effects } = useTheme();
+  const { colors, spacing, effects, isDark } = useTheme();
   
   const styles = StyleSheet.create({
     container: {
@@ -112,6 +113,7 @@ const EventCard = ({ event, size = 'large' }) => {
       borderRadius: effects.borderRadius.md,
       overflow: 'hidden',
       marginBottom: spacing.xs,
+      ...effects.shadows.light,
     },
     image: {
       width: '100%',
@@ -120,18 +122,19 @@ const EventCard = ({ event, size = 'large' }) => {
     title: {
       fontWeight: '700',
       fontSize: size === 'large' ? 16 : 14,
-      color: colors.black,
+      color: colors.text, // Use the theme's text color instead of hardcoded 'white'
       marginBottom: 2,
     },
     subtitle: {
-      color: colors.darkGrey,
+      color: colors.textSecondary, // Use the theme's secondary text color
       fontSize: size === 'large' ? 14 : 12,
     },
     date: {
       color: colors.grey,
       fontSize: size === 'large' ? 12 : 10,
       marginTop: 2,
-    }
+    },
+    
   });
 
   return (
@@ -145,6 +148,7 @@ const EventCard = ({ event, size = 'large' }) => {
     </TouchableOpacity>
   );
 };
+
 
 // Category Card Component
 const CategoryCard = ({ category }) => {
@@ -160,6 +164,7 @@ const CategoryCard = ({ category }) => {
       backgroundColor: category.color,
       justifyContent: 'center',
       padding: spacing.sm,
+      ...effects.shadows.light,
     },
     title: {
       color: 'white',
@@ -209,7 +214,14 @@ const NavItem = ({ icon, label, active, onPress }) => {
 };
 
 export default function HomeScreen() {
-  const { colors, typography, spacing, effects } = useTheme();
+  const { 
+    colors, 
+    typography, 
+    spacing, 
+    effects, 
+    isDark, 
+    toggleTheme 
+  } = useTheme();
   
   const styles = StyleSheet.create({
     container: {
@@ -230,7 +242,15 @@ export default function HomeScreen() {
     greeting: {
       fontSize: typography.fontSizes.xl,
       fontWeight: typography.fontWeights.bold,
-      color: colors.black,
+      color: isDark ? colors.black : colors.black, // Fixed for light mode visibility
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    themeToggle: {
+      marginRight: spacing.md,
+      padding: spacing.xs,
     },
     profileButton: {
       width: 40,
@@ -271,6 +291,7 @@ export default function HomeScreen() {
       overflow: 'hidden',
       marginHorizontal: spacing.lg,
       marginBottom: spacing.xl,
+      ...effects.shadows.medium,
     },
     featuredImage: {
       width: '100%',
@@ -319,7 +340,7 @@ export default function HomeScreen() {
     },
     tabBar: {
       flexDirection: 'row',
-      backgroundColor: colors.white,
+      backgroundColor: colors.card,
       paddingVertical: spacing.sm,
       borderTopWidth: 1,
       borderTopColor: colors.lightGrey,
@@ -328,6 +349,7 @@ export default function HomeScreen() {
       left: 0,
       right: 0,
       height: 70,
+      ...effects.shadows.light,
     },
     categoryList: {
       paddingLeft: spacing.lg,
@@ -362,16 +384,28 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       
       <View style={styles.header}>
         <Text style={styles.greeting}>{renderTimeBasedGreeting()}</Text>
-        <TouchableOpacity 
-          style={styles.profileButton}
-          onPress={() => router.push('/profile')}
-        >
-          <Text style={styles.profileInitial}>J</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.themeToggle} 
+            onPress={toggleTheme}
+          >
+            <Ionicons 
+              name={isDark ? 'sunny-outline' : 'moon-outline'} 
+              size={24} 
+              color={colors.darkGrey} 
+            />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.profileButton}
+            onPress={() => router.push('/profile')}
+          >
+            <Text style={styles.profileInitial}>J</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
       <ScrollView 
