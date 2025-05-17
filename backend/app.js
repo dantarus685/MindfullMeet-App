@@ -1,8 +1,26 @@
+require('dotenv').config();
 const express = require('express');
 const app = express();
+const cors = require('cors'); // Add this import
 
 app.use(express.json());
 // Custom request logger middleware
+
+// Configure CORS - add this before other middleware
+app.use(cors({
+  origin: [
+    'http://localhost:8081',
+    'http://localhost:19006', // Expo web
+    /^exp:\/\/.*/,            // Expo Go app
+    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo
+    'http://localhost:8080',  // Common webpack port
+    'exp://localhost:8081',   // Another common Expo format
+    'exp://127.0.0.1:8081'    // Another Expo format
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+}));
 app.use((req, res, next) => {
   const start = Date.now();
   const timestamp = new Date().toISOString();

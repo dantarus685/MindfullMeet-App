@@ -500,7 +500,7 @@ export default function HomeScreen() {
         />
       </ScrollView>
       
-      {/* Bottom Tab Bar */}
+      {/* Bottom Tab Bar
       <View style={styles.tabBar}>
         <NavItem 
           icon="home" 
@@ -528,7 +528,7 @@ export default function HomeScreen() {
           label="Profile" 
           onPress={() => router.push('/profile')} 
         />
-      </View>
+      </View> */}
     </SafeAreaView>
   );
 }
