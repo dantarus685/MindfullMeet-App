@@ -1,11 +1,11 @@
-// src/screens/auth/LoginScreen.js
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../constants/theme';
 import TextInput from '../../components/common/TextInput';
-import { Ionicons } from '@expo/vector-icons';
 
-const LoginScreen = ({ navigation }) => {
+const LoginScreen = () => {
   const { colors, typography, spacing } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -104,7 +104,7 @@ const LoginScreen = ({ navigation }) => {
     >
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => navigation.goBack()}
+        onPress={() => router.back()}
       >
         <Ionicons name="arrow-back" size={24} color={colors.darkGrey} />
       </TouchableOpacity>
@@ -169,7 +169,7 @@ const LoginScreen = ({ navigation }) => {
         
         <View style={styles.signupContainer}>
           <Text style={styles.signupText}>Don&apos;t have an account?</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+          <TouchableOpacity onPress={() => router.push("/auth/signup")}>
             <Text style={styles.signupLink}>Sign up</Text>
           </TouchableOpacity>
         </View>

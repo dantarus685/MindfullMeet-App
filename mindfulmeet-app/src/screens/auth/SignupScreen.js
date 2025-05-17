@@ -1,5 +1,5 @@
-// src/screens/auth/SignupScreen.js
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Alert,
@@ -12,18 +12,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-// Commenting out unused import
-// import { useDispatch } from 'react-redux';
 import TextInput from '../../components/common/TextInput';
 import { useTheme } from '../../constants/theme';
 
-const SignupScreen = ({ navigation }) => {
+const SignupScreen = () => {
   const { colors, typography, spacing, effects } = useTheme();
-  // Commenting out unused variable
-  // const dispatch = useDispatch();
   
-  // In a real app, you would use the auth state from Redux
-  // const { isLoading, error } = useSelector((state) => state.auth);
   const isLoading = false;
   const error = null;
 
@@ -114,7 +108,6 @@ const SignupScreen = ({ navigation }) => {
   };
 
   const validateForm = () => {
-    // Use a local variable to check errors, not the unused newErrors
     const touchedFields = {};
     
     // Mark all fields as touched
@@ -131,9 +124,6 @@ const SignupScreen = ({ navigation }) => {
 
   const handleSignup = () => {
     if (validateForm()) {
-      // In a real app, dispatch action to register user
-      // dispatch(registerUser(formData));
-      
       // For now, just show alert and navigate to login
       Alert.alert(
         'Success!',
@@ -141,7 +131,7 @@ const SignupScreen = ({ navigation }) => {
         [
           { 
             text: 'OK', 
-            onPress: () => navigation.navigate('Login') 
+            onPress: () => router.push('/auth/login') 
           }
         ]
       );
@@ -256,7 +246,7 @@ const SignupScreen = ({ navigation }) => {
     >
       <TouchableOpacity 
         style={styles.backButton} 
-        onPress={() => navigation.goBack()}
+        onPress={() => router.back()}
       >
         <Ionicons name="arrow-back" size={24} color={colors.darkGrey} />
       </TouchableOpacity>
@@ -383,7 +373,7 @@ const SignupScreen = ({ navigation }) => {
         
         <View style={styles.footer}>
           <Text style={styles.footerText}>Already have an account?</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+          <TouchableOpacity onPress={() => router.push('/auth/login')}>
             <Text style={styles.footerLink}>Log In</Text>
           </TouchableOpacity>
         </View>
