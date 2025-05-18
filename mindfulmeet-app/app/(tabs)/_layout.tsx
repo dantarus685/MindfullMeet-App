@@ -16,10 +16,9 @@ export default function TabLayout() {
           backgroundColor: colors.card || colors.background,
           borderTopColor: colors.lightGrey,
           borderTopWidth: 1,
-          height: 80, // Increased height
-          paddingBottom: 16, // Increased bottom padding
+          height: 80,
+          paddingBottom: 16,
           paddingTop: 10,
-          // Shadow effects
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -3 },
           shadowOpacity: 0.1,
@@ -28,11 +27,11 @@ export default function TabLayout() {
         },
         tabBarLabelStyle: {
           fontSize: 12,
-          paddingBottom: 4, // Add padding to the label itself
-          marginTop: 2,     // Small margin from the icon
+          paddingBottom: 4,
+          marginTop: 2,
         },
         tabBarIconStyle: {
-          marginBottom: 0, // Reduce icon margin to make more room for text
+          marginBottom: 0,
         }
       }}
     >
@@ -53,6 +52,19 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="calendar-outline" size={size} color={color} />
           ),
+        }}
+      />
+      
+      {/* Add this block to include the event detail screen but hide it from tab bar */}
+      <Tabs.Screen
+        name="events/[id]"
+        options={{
+          // This hides the tab button itself but keeps the route accessible
+          // href: null,
+          // Hide it from the tab bar completely
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
+
         }}
       />
       

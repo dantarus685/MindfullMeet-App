@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   View, 
   Text, 
@@ -6,50 +6,14 @@ import {
   SafeAreaView, 
   FlatList, 
   TouchableOpacity,
-  Image
+  Image,
+  ActivityIndicator
 } from 'react-native';
 import { useTheme } from '../../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-
-// Mock data for events
-const events = [
-  {
-    id: '1',
-    title: 'Community Meditation',
-    date: 'Today at 7:00 PM',
-    location: 'Central Park, NY',
-    image: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: '2',
-    title: 'Anxiety Management Workshop',
-    date: 'Tomorrow at 6:30 PM',
-    location: 'Virtual Event',
-    image: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: '3',
-    title: 'Mindfulness for Beginners',
-    date: 'Wed, May 20 at 5:00 PM',
-    location: 'Wellness Center, Brooklyn',
-    image: 'https://images.unsplash.com/photo-1593811167562-9cef47bfc4d7?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: '4',
-    title: 'Stress Relief Yoga Session',
-    date: 'Thu, May 21 at 8:00 AM',
-    location: 'Harmony Yoga Studio',
-    image: 'https://images.unsplash.com/photo-1545389336-cf090694435e?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-  },
-  {
-    id: '5',
-    title: 'Sleep Improvement Techniques',
-    date: 'Fri, May 22 at 7:00 PM',
-    location: 'Community Health Center',
-    image: 'https://images.unsplash.com/photo-1455218873509-8097305ee378?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-  },
-];
+import { router } from 'expo-router';
+import api from '../../src/config/api';
 
 const EventCard = ({ event }) => {
   const { colors, spacing, effects } = useTheme();
@@ -94,23 +58,56 @@ const EventCard = ({ event }) => {
       alignItems: 'center',
     }
   });
+
+  // Format the date from the API
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', { 
+      weekday: 'short',
+      month: 'short', 
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric'
+    }).format(date);
+  };
+
+  // Determine location text based on event data
+  const getLocationText = () => {
+    if (event.isOnline) {
+      return 'Virtual Event';
+    } else if (event.city && event.state) {
+      return `${event.city}, ${event.state}`;
+    } else {
+      return event.address || 'Location unavailable';
+    }
+  };
   
   return (
-    <TouchableOpacity style={styles.card}>
-      <Image source={{ uri: event.image }} style={styles.image} />
+    <TouchableOpacity 
+      style={styles.card}
+      onPress={() => router.push(`/events/${event.id}`)}
+    >
+      <Image 
+        source={{ uri: event.imageUrl || 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80' }} 
+        style={styles.image} 
+      />
       <View style={styles.content}>
         <Text style={styles.title}>{event.title}</Text>
         <View style={styles.dateRow}>
           <View style={styles.icon}>
             <Ionicons name="calendar-outline" size={16} color={colors.primary} />
           </View>
-          <Text style={styles.detailText}>{event.date}</Text>
+          <Text style={styles.detailText}>{formatDate(event.startTime)}</Text>
         </View>
         <View style={styles.locationRow}>
           <View style={styles.icon}>
-            <Ionicons name="location-outline" size={16} color={colors.primary} />
+            <Ionicons 
+              name={event.isOnline ? "globe-outline" : "location-outline"} 
+              size={16} 
+              color={colors.primary} 
+            />
           </View>
-          <Text style={styles.detailText}>{event.location}</Text>
+          <Text style={styles.detailText}>{getLocationText()}</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -119,6 +116,27 @@ const EventCard = ({ event }) => {
 
 export default function EventsScreen() {
   const { colors, spacing, isDark } = useTheme();
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  // Fetch events when component mounts
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  const fetchEvents = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/api/events');
+      setEvents(response.data.data.events);
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching events:', err);
+      setError('Could not load events. Please try again later.');
+      setLoading(false);
+    }
+  };
   
   const styles = StyleSheet.create({
     container: {
@@ -142,8 +160,93 @@ export default function EventsScreen() {
     listContainer: {
       flex: 1,
       paddingHorizontal: spacing.lg,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    errorText: {
+      color: colors.error,
+      fontSize: 16,
+      textAlign: 'center',
+      marginBottom: spacing.md,
+    },
+    retryButton: {
+      backgroundColor: colors.primary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: 8,
+    },
+    retryButtonText: {
+      color: colors.white,
+      fontWeight: '500',
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    emptyText: {
+      color: colors.textSecondary,
+      fontSize: 16,
+      textAlign: 'center',
     }
   });
+
+  // Loading state
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <View style={styles.header}>
+          <Text style={styles.title}>Upcoming Events</Text>
+          <Text style={styles.subtitle}>Find events that match your interests</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <View style={styles.header}>
+          <Text style={styles.title}>Upcoming Events</Text>
+          <Text style={styles.subtitle}>Find events that match your interests</Text>
+        </View>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity 
+            style={styles.retryButton}
+            onPress={fetchEvents}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Empty state
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyText}>
+        No events found. Check back later for upcoming events!
+      </Text>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -157,9 +260,10 @@ export default function EventsScreen() {
       <FlatList
         data={events}
         renderItem={({ item }) => <EventCard event={item} />}
-        keyExtractor={item => item.id}
+        keyExtractor={item => item.id.toString()}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={renderEmpty}
       />
     </SafeAreaView>
   );

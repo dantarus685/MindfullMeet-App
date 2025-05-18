@@ -1,29 +1,43 @@
 // routes/eventRoutes.js
 const express = require('express');
+const { body } = require('express-validator');
 const eventController = require('../controllers/eventController');
 const authController = require('../controllers/authController');
-const { Op } = require('sequelize');
 
 const router = express.Router();
 
-// Public routes
-router.get('/', eventController.getAllEvents);
-router.get('/types/stats', eventController.getEventTypeStats);
-router.get('/:id', eventController.getEvent);
+// Public routes - Fix the order: specific routes first, then parameterized routes
+router.get('/category/:category', eventController.getEventsByCategory); // More specific route first
+router.get('/host/:hostId', eventController.getEventsByHost); // More specific route first
+router.get('/my/events', eventController.getMyEvents); // More specific route first
+router.get('/', eventController.getAllEvents); // Root route
+router.get('/:id', eventController.getEvent); // Generic ID route last
 
 // Protected routes
-router.use(authController.protect);
+router.use(authController.protect); // Middleware to protect routes below
 
-router.post('/', eventController.createEvent);
-router.patch('/:id', eventController.updateEvent);
-router.delete('/:id', eventController.deleteEvent);
+router.post('/', [
+  body('title').notEmpty().withMessage('Title is required'),
+  body('description').notEmpty().withMessage('Description is required'),
+  body('eventType').notEmpty().withMessage('Event type is required'),
+  body('startTime').notEmpty().withMessage('Start time is required'),
+  body('endTime').notEmpty().withMessage('End time is required')
+], eventController.createEvent);
 
 // RSVP routes
-router.post('/:id/rsvp', eventController.createRSVP);
-router.get('/:id/attendees', eventController.getEventAttendees);
+router.post('/:id/rsvp', [
+  body('status').isIn(['going', 'interested', 'not-going']).withMessage('Invalid RSVP status')
+], eventController.rsvpToEvent);
 
-// Comment routes
-router.post('/:id/comments', eventController.createComment);
-router.get('/:id/comments', eventController.getEventComments);
+router.post('/:id/checkin', eventController.checkInToEvent);
+router.get('/:id/rsvps', eventController.getEventRSVPs);
+
+router.post('/:id/feedback', [
+  body('rating').isInt({min: 1, max: 5}).withMessage('Rating must be between 1 and 5'),
+  body('feedback').notEmpty().withMessage('Feedback is required')
+], eventController.submitEventFeedback);
+
+router.patch('/:id', eventController.updateEvent);
+router.delete('/:id', eventController.deleteEvent);
 
 module.exports = router;

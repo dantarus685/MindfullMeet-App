@@ -69,7 +69,7 @@ const handleLogin = async () => {
     dispatch(loginStart());
     
     // Make the actual API call
-    const response = await axios.post(`${API_URL}/auth/login`, {
+    const response = await axios.post(`${API_URL}/api/auth/login`, {
       email,
       password
     });
