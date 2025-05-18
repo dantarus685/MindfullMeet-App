@@ -1,44 +1,127 @@
-// routes/eventRoutes.js
-const express = require('express');
-const { body } = require('express-validator');
-const eventController = require('../controllers/eventController');
-const rsvpController = require('../controllers/rsvpController');
-const authController = require('../controllers/authController');
+// models/event.js
+module.exports = (sequelize, DataTypes) => {
+  const Event = sequelize.define('Event', {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true
+    },
+    title: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    eventType: {
+      type: DataTypes.ENUM(
+        'meditation',
+        'support-group',
+        'therapy-session',
+        'wellness-workshop',
+        'nature-therapy',
+        'mindfulness-retreat',
+        'other'
+      ),
+      allowNull: false
+    },
+    address: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    city: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    state: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    zipCode: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    country: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    latitude: {
+      type: DataTypes.FLOAT,
+      allowNull: true
+    },
+    longitude: {
+      type: DataTypes.FLOAT,
+      allowNull: true
+    },
+    isOnline: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+    meetingLink: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    startTime: {
+      type: DataTypes.DATE,
+      allowNull: false
+    },
+    endTime: {
+      type: DataTypes.DATE,
+      allowNull: false
+    },
+    maxParticipants: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    hostId: {
+      type: DataTypes.INTEGER,
+      allowNull: false
+    },
+    tags: {
+      type: DataTypes.JSON,
+      allowNull: true
+    },
+    imageUrl: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    requirements: {
+      type: DataTypes.JSON,
+      allowNull: true
+    },
+    resources: {
+      type: DataTypes.JSON,
+      allowNull: true
+    },
+    active: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true
+    }
+  }, {
+    timestamps: true,
+    tableName: 'events'
+  });
 
-const router = express.Router();
+  Event.associate = function(models) {
+    // Event belongs to a User (host)
+    Event.belongsTo(models.User, {
+      foreignKey: 'hostId',
+      as: 'host'
+    });
+    
+    // Event has many RSVPs
+    Event.hasMany(models.RSVP, {
+      foreignKey: 'eventId',
+      as: 'rsvps'
+    });
+    
+    // Event has many Comments
+    Event.hasMany(models.Comment, {
+      foreignKey: 'eventId',
+      as: 'comments'
+    });
+  };
 
-// Public routes
-router.get('/', eventController.getAllEvents);
-router.get('/:id', eventController.getEvent);
-router.get('/category/:category', eventController.getEventsByCategory);
-router.get('/host/:hostId', eventController.getEventsByHost);
-
-// Protected routes
-router.use(authController.protect); // Middleware to protect routes below
-
-router.post('/', [
-  body('title').notEmpty().withMessage('Title is required'),
-  body('description').notEmpty().withMessage('Description is required'),
-  body('eventType').notEmpty().withMessage('Event type is required'),
-  body('startTime').notEmpty().withMessage('Start time is required'),
-  body('endTime').notEmpty().withMessage('End time is required')
-], eventController.createEvent);
-
-router.patch('/:id', eventController.updateEvent);
-router.delete('/:id', eventController.deleteEvent);
-
-// RSVP routes
-router.post('/:id/rsvp', [
-  body('status').isIn(['going', 'interested', 'not-going']).withMessage('Invalid RSVP status')
-], eventController.rsvpToEvent);
-
-router.get('/my/events', eventController.getMyEvents);
-router.post('/:id/checkin', rsvpController.checkInToEvent);
-router.get('/:id/rsvps', rsvpController.getEventRSVPs);
-
-router.post('/:id/feedback', [
-  body('rating').isInt({min: 1, max: 5}).withMessage('Rating must be between 1 and 5'),
-  body('feedback').notEmpty().withMessage('Feedback is required')
-], eventController.submitEventFeedback);
-
-module.exports = router;
+  return Event;
+};
