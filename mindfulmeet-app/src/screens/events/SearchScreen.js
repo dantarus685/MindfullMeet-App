@@ -226,7 +226,7 @@ const SearchScreen = () => {
         <View style={styles.emptyState}>
           <Ionicons name="help-circle-outline" size={60} color={colors.grey} />
           <Text style={styles.emptyText}>
-            No events found for "{searchTerm}"
+            No events found for {searchTerm}
           </Text>
         </View>
       );
