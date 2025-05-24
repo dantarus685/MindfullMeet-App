@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,15 +12,16 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Linking,
+  Animated,
+  Easing
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import TextInput from '../../components/common/TextInput';
 import { useTheme } from '../../constants/theme';
 import { clearError } from '../../redux/authSlice';
 import axios from 'axios';
-import api, { API_URL } from '../../config/api'; // Import the configured api instance
-
-// Configure your API base URL
+import {API_URL} from '../../config/api'; // Import the configured api instance
 
 const SignupScreen = () => {
   const { colors, typography, spacing, effects } = useTheme();
@@ -31,7 +32,7 @@ const SignupScreen = () => {
     name: '',
     email: '',
     password: '',
-    passwordConfirm: '', // Renamed to match your API
+    passwordConfirm: '',
     bio: '',
   });
   
@@ -40,6 +41,45 @@ const SignupScreen = () => {
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Create an animated value for the flip animation
+  const flipAnimation = useRef(new Animated.Value(0)).current;
+  
+  // Create interpolated values for the rotation
+  const flipRotation = flipAnimation.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: ['0deg', '180deg', '360deg']
+  });
+  
+  // Create interpolated values for scaling during animation
+  const flipScale = flipAnimation.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.2, 1]
+  });
+
+  // Start the flip animation when isSubmitting changes
+  useEffect(() => {
+    if (isSubmitting || isLoading) {
+      // Reset and start continuous flipping animation
+      Animated.loop(
+        Animated.timing(flipAnimation, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.linear,
+          useNativeDriver: true
+        })
+      ).start();
+    } else {
+      // Stop animation when loading stops
+      flipAnimation.stopAnimation();
+      // Reset to original position
+      Animated.timing(flipAnimation, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true
+      }).start();
+    }
+  }, [isSubmitting, isLoading]);
 
   // Clear previous errors when component mounts
   useEffect(() => {
@@ -95,7 +135,7 @@ const SignupScreen = () => {
       case 'password':
         if (!value) {
           newErrors.password = 'Password is required';
-        } else if (value.length < 8) { // Updated to match your backend validation
+        } else if (value.length < 8) {
           newErrors.password = 'Password must be at least 8 characters';
         } else {
           newErrors.password = '';
@@ -144,88 +184,72 @@ const SignupScreen = () => {
     return isValid;
   };
 
-// In the handleSignup function, update the error handling part:
-const handleSignup = async () => {
-  if (validateForm()) {
-    setIsSubmitting(true);
-    
-    try {
-      console.log('Sending signup request to:', `${API_URL}/auth/signup`);
-      console.log('With data:', { ...formData, password: '****', passwordConfirm: '****' });
+  const handleSignup = async () => {
+    if (validateForm()) {
+      setIsSubmitting(true);
       
-      // Make API call to your actual backend
-      const response = await axios.post(`${API_URL}/auth/signup`, formData);
-      
-      console.log('Signup successful:', response.data);
-      setIsSubmitting(false);
-      
-      // Show success message and navigate to login
-      Alert.alert(
-        'Success!',
-        'Account created successfully. Please log in.',
-        [{ 
-          text: 'OK', 
-          onPress: () => {
-            console.log('Direct navigation to login screen');
+      try {
+        console.log('Sending signup request to:', `${API_URL}/api/auth/signup`);
+        
+        // Make API call to your actual backend
+        const response = await axios.post(`${API_URL}/api/auth/signup`, formData);
+        
+        console.log('Signup successful:', response.data);
+        setIsSubmitting(false);
+        
+        // Navigate to login screen
+        router.replace('/auth/login');
+        
+        // Show success message
+        Alert.alert('Success!', 'Account created successfully. Please log in.');
+        
+      } catch (err) {
+        console.error('Signup error:', err);
+        setIsSubmitting(false);
+        
+        // Handle different types of errors
+        if (err.response) {
+          console.log('Server response error data:', err.response.data);
+          
+          // Handle validation errors from your API
+          const serverErrors = err.response.data.errors || err.response.data.error;
+          
+          if (Array.isArray(serverErrors)) {
+            // Handle express-validator errors format
+            const newErrors = {};
             
-            // Try navigating directly to the file path (more reliable with Expo Router)
-            try {
-              window.location.href = '/auth/login';
-            } catch (e) {
-              console.error('Direct navigation failed:', e);
-              router.push('/auth/login');
-            }
+            serverErrors.forEach(error => {
+              newErrors[error.param] = error.msg;
+            });
+            
+            setErrors(newErrors);
+            setTouched({
+              name: true,
+              email: true,
+              password: true,
+              passwordConfirm: true
+            });
+            
+            Alert.alert('Validation Error', serverErrors[0]?.msg || 'Please check the form for errors');
+          } else {
+            // Handle generic error message
+            Alert.alert('Error', 
+              err.response.data.message || 
+              err.response.data.error || 
+              'Signup failed');
           }
-        }]
-      );
-      
-    } catch (err) {
-      console.error('Signup error:', err);
-      setIsSubmitting(false);
-      
-      // Handle different types of errors
-      if (err.response) {
-        console.log('Server response error data:', err.response.data);
-        
-        // Handle validation errors from your API
-        const serverErrors = err.response.data.errors || err.response.data.error;
-        
-        if (Array.isArray(serverErrors)) {
-          // Handle express-validator errors format
-          const newErrors = {};
-          
-          serverErrors.forEach(error => {
-            newErrors[error.param] = error.msg;
-          });
-          
-          setErrors(newErrors);
-          setTouched({
-            name: true,
-            email: true,
-            password: true,
-            passwordConfirm: true
-          });
-          
-          Alert.alert('Validation Error', serverErrors[0]?.msg || 'Please check the form for errors');
+        } else if (err.request) {
+          // The request was made but no response was received
+          Alert.alert('Network Error', 'Please check your connection');
         } else {
-          // Handle generic error message
-          Alert.alert('Error', 
-            err.response.data.message || 
-            err.response.data.error || 
-            'Signup failed');
+          // Something else happened while setting up the request
+          Alert.alert('Error', err.message || 'An error occurred during signup');
         }
-      } else if (err.request) {
-        // The request was made but no response was received
-        Alert.alert('Network Error', 'Please check your connection');
-      } else {
-        // Something else happened while setting up the request
-        Alert.alert('Error', err.message || 'An error occurred during signup');
       }
+    } else {
+      Alert.alert('Form Error', 'Please fix the errors in the form');
     }
-  } else {
-    Alert.alert('Form Error', 'Please fix the errors in the form');
-  }
-};
+  };
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
@@ -347,10 +371,18 @@ const handleSignup = async () => {
       >
         <View style={styles.headerContainer}>
           <View style={styles.logoContainer}>
-            <Image
-              source={{ uri: 'https://via.placeholder.com/80' }}
-              style={styles.logo}
-            />
+            {/* Animated logo with flip effect */}
+            <Animated.View style={{
+              transform: [
+                { rotateY: flipRotation },
+                { scale: flipScale }
+              ]
+            }}>
+              <Image
+                source={require('../../../assets/images/logo.png')} // Update with your actual logo path
+                style={styles.logo}
+              />
+            </Animated.View>
           </View>
           <Text style={styles.title}>Create Account</Text>
           <Text style={styles.subtitle}>
