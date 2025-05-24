@@ -1,4 +1,5 @@
-import React from 'react';
+// src/screens/HomeScreen.js
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -8,98 +9,64 @@ import {
   TouchableOpacity, 
   SafeAreaView,
   FlatList,
-  useColorScheme
+  ActivityIndicator,
+  RefreshControl,
+  Alert
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { useSelector } from 'react-redux';
+import { format, isToday, isTomorrow } from 'date-fns';
+import api from '../config/api';
 
-// Mock data for events
-const upcomingEvents = [
-  {
-    id: '1',
-    title: 'Morning Meditation',
-    host: 'Sarah Johnson',
-    image: 'https://images.unsplash.com/photo-1545389336-cf090694435e?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Today • 8:00 AM',
-    type: 'meditation'
-  },
-  {
-    id: '2',
-    title: 'Anxiety Support Group',
-    host: 'Dr. Michael Chen',
-    image: 'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Tomorrow • 5:30 PM',
-    type: 'support-group'
-  },
-  {
-    id: '3',
-    title: 'Nature Therapy Walk',
-    host: 'Emma Roberts',
-    image: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Wed, May 20 • 10:00 AM',
-    type: 'nature-therapy'
-  }
-];
-
+// Category mapping for backend event types
 const popularCategories = [
   {
     id: '1',
     title: 'Meditation',
     image: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    color: '#8BBBD9'
+    color: '#8BBBD9',
+    eventType: 'meditation'
   },
   {
     id: '2',
     title: 'Support Groups',
     image: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    color: '#F4B9B2'
+    color: '#F4B9B2',
+    eventType: 'support-group'
   },
   {
     id: '3',
     title: 'Therapy Sessions',
     image: 'https://images.unsplash.com/photo-1573497019418-b400bb3ab074?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    color: '#C8D5B9'
+    color: '#C8D5B9',
+    eventType: 'therapy-session'
   },
   {
     id: '4',
     title: 'Mindfulness',
     image: 'https://images.unsplash.com/photo-1508672019048-805c876b67e2?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    color: '#5B8E7D'
+    color: '#5B8E7D',
+    eventType: 'mindfulness-retreat'
   },
 ];
 
-const forYou = [
-  {
-    id: '1',
-    title: 'Stress Relief Workshop',
-    host: 'Dr. Amanda Lee',
-    image: 'https://images.unsplash.com/photo-1516383607781-913a19294fd1?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Thu, May 21 • 6:00 PM',
-    type: 'workshop'
-  },
-  {
-    id: '2',
-    title: 'Mindful Breathing',
-    host: 'Jason Morris',
-    image: 'https://images.unsplash.com/photo-1497561813398-8fcc7a37b567?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Fri, May 22 • 7:30 AM',
-    type: 'meditation'
-  },
-  {
-    id: '3',
-    title: 'Sleep Improvement Seminar',
-    host: 'Lisa Thompson',
-    image: 'https://images.unsplash.com/photo-1530786599993-b2fdb8aedd73?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80',
-    date: 'Sat, May 23 • 8:00 PM',
-    type: 'seminar'
-  }
-];
-// Event Card Component// Fixed EventCard Component
-// Fixed EventCard Component
+// EventCard Component
 const EventCard = ({ event, size = 'large' }) => {
-  const { colors, spacing, effects, isDark } = useTheme();
+  const { colors, spacing, effects } = useTheme();
+  
+  const formatEventDate = (startTime) => {
+    const eventDate = new Date(startTime);
+    if (isToday(eventDate)) {
+      return `Today • ${format(eventDate, 'h:mm a')}`;
+    } else if (isTomorrow(eventDate)) {
+      return `Tomorrow • ${format(eventDate, 'h:mm a')}`;
+    } else {
+      return `${format(eventDate, 'EEE, MMM d')} • ${format(eventDate, 'h:mm a')}`;
+    }
+  };
   
   const styles = StyleSheet.create({
     container: {
@@ -119,14 +86,21 @@ const EventCard = ({ event, size = 'large' }) => {
       width: '100%',
       height: '100%',
     },
+    placeholderImage: {
+      width: '100%',
+      height: '100%',
+      backgroundColor: colors.lightGrey,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
     title: {
       fontWeight: '700',
       fontSize: size === 'large' ? 16 : 14,
-      color: colors.text, // Use the theme's text color instead of hardcoded 'white'
+      color: colors.text,
       marginBottom: 2,
     },
     subtitle: {
-      color: colors.textSecondary, // Use the theme's secondary text color
+      color: colors.textSecondary,
       fontSize: size === 'large' ? 14 : 12,
     },
     date: {
@@ -134,23 +108,42 @@ const EventCard = ({ event, size = 'large' }) => {
       fontSize: size === 'large' ? 12 : 10,
       marginTop: 2,
     },
-    
+    rsvpCount: {
+      color: colors.primary,
+      fontSize: size === 'large' ? 11 : 9,
+      marginTop: 1,
+      fontWeight: '500',
+    },
   });
 
+  const handlePress = () => {
+    router.push(`/events/${event.id}`);
+  };
+
   return (
-    <TouchableOpacity style={styles.container}>
+    <TouchableOpacity style={styles.container} onPress={handlePress}>
       <View style={styles.imageContainer}>
-        <Image source={{ uri: event.image }} style={styles.image} />
+        {event.imageUrl ? (
+          <Image source={{ uri: event.imageUrl }} style={styles.image} />
+        ) : (
+          <View style={styles.placeholderImage}>
+            <Ionicons name="image-outline" size={30} color={colors.grey} />
+          </View>
+        )}
       </View>
       <Text style={styles.title} numberOfLines={1}>{event.title}</Text>
-      <Text style={styles.subtitle} numberOfLines={1}>by {event.host}</Text>
-      <Text style={styles.date}>{event.date}</Text>
+      <Text style={styles.subtitle} numberOfLines={1}>by {event.host?.name}</Text>
+      <Text style={styles.date}>{formatEventDate(event.startTime)}</Text>
+      {event.rsvpCount > 0 && (
+        <Text style={styles.rsvpCount}>
+          {event.rsvpCount} {event.rsvpCount === 1 ? 'person' : 'people'} going
+        </Text>
+      )}
     </TouchableOpacity>
   );
 };
 
-
-// Category Card Component
+// CategoryCard Component
 const CategoryCard = ({ category }) => {
   const { spacing, effects, typography } = useTheme();
   
@@ -173,42 +166,16 @@ const CategoryCard = ({ category }) => {
     }
   });
 
+  const handlePress = () => {
+    router.push({
+      pathname: '/(tabs)/events',
+      params: { eventType: category.eventType }
+    });
+  };
+
   return (
-    <TouchableOpacity style={styles.container}>
+    <TouchableOpacity style={styles.container} onPress={handlePress}>
       <Text style={styles.title}>{category.title}</Text>
-    </TouchableOpacity>
-  );
-};
-
-// Bottom Navigation Item
-const NavItem = ({ icon, label, active, onPress }) => {
-  const { colors, spacing } = useTheme();
-  
-  const styles = StyleSheet.create({
-    container: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      flex: 1,
-    },
-    icon: {
-      marginBottom: 4,
-    },
-    label: {
-      color: active ? colors.primary : colors.darkGrey,
-      fontSize: 12,
-      fontWeight: active ? '500' : 'normal',
-    }
-  });
-
-  return (
-    <TouchableOpacity style={styles.container} onPress={onPress}>
-      <Ionicons 
-        name={icon} 
-        size={24} 
-        color={active ? colors.primary : colors.darkGrey} 
-        style={styles.icon} 
-      />
-      <Text style={styles.label}>{label}</Text>
     </TouchableOpacity>
   );
 };
@@ -222,6 +189,17 @@ export default function HomeScreen() {
     isDark, 
     toggleTheme 
   } = useTheme();
+  
+  // Get user from Redux (for auth state)
+  const { user } = useSelector(state => state.auth);
+  
+  // Local state for events
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [featuredEvent, setFeaturedEvent] = useState(null);
   
   const styles = StyleSheet.create({
     container: {
@@ -242,7 +220,7 @@ export default function HomeScreen() {
     greeting: {
       fontSize: typography.fontSizes.xl,
       fontWeight: typography.fontWeights.bold,
-      color: isDark ? colors.black : colors.black, // Fixed for light mode visibility
+      color: colors.text,
     },
     headerActions: {
       flexDirection: 'row',
@@ -275,7 +253,7 @@ export default function HomeScreen() {
     sectionTitle: {
       fontSize: typography.fontSizes.lg,
       fontWeight: typography.fontWeights.bold,
-      color: colors.black,
+      color: colors.text,
     },
     seeAllButton: {
       color: colors.primary,
@@ -314,7 +292,7 @@ export default function HomeScreen() {
       fontSize: typography.fontSizes.md,
     },
     contentContainer: {
-      paddingBottom: 90, // Add padding to account for the tab bar
+      paddingBottom: 90,
     },
     filterChips: {
       flexDirection: 'row',
@@ -338,19 +316,6 @@ export default function HomeScreen() {
     activeChipText: {
       color: colors.white,
     },
-    tabBar: {
-      flexDirection: 'row',
-      backgroundColor: colors.card,
-      paddingVertical: spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: colors.lightGrey,
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: 70,
-      ...effects.shadows.light,
-    },
     categoryList: {
       paddingLeft: spacing.lg,
       marginBottom: spacing.lg,
@@ -373,14 +338,186 @@ export default function HomeScreen() {
       color: colors.darkGrey,
       fontSize: typography.fontSizes.md,
     },
+    loadingContainer: {
+      padding: spacing.lg,
+      alignItems: 'center',
+    },
+    emptyContainer: {
+      padding: spacing.lg,
+      alignItems: 'center',
+    },
+    emptyText: {
+      color: colors.textSecondary,
+      fontSize: typography.fontSizes.md,
+      textAlign: 'center',
+    },
+    errorContainer: {
+      padding: spacing.lg,
+      alignItems: 'center',
+    },
+    errorText: {
+      color: colors.error,
+      fontSize: typography.fontSizes.md,
+      textAlign: 'center',
+      marginBottom: spacing.md,
+    },
+    retryButton: {
+      backgroundColor: colors.primary,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderRadius: effects.borderRadius.md,
+    },
+    retryButtonText: {
+      color: colors.white,
+      fontWeight: typography.fontWeights.medium,
+    },
   });
+
+  // Get upcoming events (next 7 days)
+  const upcomingEvents = events.filter(event => {
+    const eventDate = new Date(event.startTime);
+    const now = new Date();
+    const nextWeek = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000));
+    return eventDate > now && eventDate <= nextWeek;
+  }).slice(0, 10);
+
+  // Get recommended events (based on user's past RSVPs or popular events)
+  const recommendedEvents = events.filter(event => {
+    const eventDate = new Date(event.startTime);
+    return eventDate > new Date();
+  }).slice(0, 10);
+
+  // Fetch events function
+  const fetchEvents = async (isRefresh = false) => {
+    try {
+      if (!isRefresh) setLoading(true);
+      setError(null);
+      
+      // Build query params
+      let url = '/api/events?page=1&limit=20';
+      if (selectedFilter !== 'all') {
+        url += `&eventType=${selectedFilter}`;
+      }
+      
+      const response = await api.get(url);
+      setEvents(response.data.data.events);
+      
+      if (!isRefresh) setLoading(false);
+    } catch (err) {
+      console.error('Error fetching events:', err);
+      setError('Could not load events. Please try again later.');
+      if (!isRefresh) setLoading(false);
+    }
+  };
+
+  // Load initial data
+  useEffect(() => {
+    fetchEvents();
+  }, [selectedFilter]);
+
+  // Set featured event when events are loaded
+  useEffect(() => {
+    if (events.length > 0 && !featuredEvent) {
+      // Find an event with high RSVP count or recent event
+      const featured = events.find(event => 
+        event.rsvpCount > 5 || 
+        event.eventType === 'wellness-workshop'
+      ) || events[0];
+      setFeaturedEvent(featured);
+    }
+  }, [events]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchEvents(true);
+    setRefreshing(false);
+  }, [selectedFilter]);
+
+  const handleFilterChange = async (filter) => {
+    setSelectedFilter(filter);
+  };
+
+  const handleSearch = () => {
+    router.push('/events/search');
+  };
+
+  const handleSeeAllEvents = () => {
+    router.push('/(tabs)/events');
+  };
 
   const renderTimeBasedGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
+    const name = user?.name?.split(' ')[0] || 'there';
+    
+    let greeting = 'Good evening';
+    if (hour < 12) greeting = 'Good morning';
+    else if (hour < 18) greeting = 'Good afternoon';
+    
+    return `${greeting}, ${name}`;
   };
+
+  const renderFeaturedEvent = () => {
+    if (!featuredEvent) return null;
+
+    return (
+      <TouchableOpacity 
+        style={styles.featuredEvent}
+        onPress={() => router.push(`/events/${featuredEvent.id}`)}
+      >
+        {featuredEvent.imageUrl ? (
+          <Image 
+            source={{ uri: featuredEvent.imageUrl }} 
+            style={styles.featuredImage} 
+          />
+        ) : (
+          <View style={[styles.featuredImage, { backgroundColor: colors.primary }]} />
+        )}
+        <View style={styles.featuredContent}>
+          <Text style={styles.featuredTitle}>{featuredEvent.title}</Text>
+          <Text style={styles.featuredSubtitle}>
+            {format(new Date(featuredEvent.startTime), 'MMM d')} • {featuredEvent.host?.name}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderEventList = (eventList, emptyMessage) => {
+    if (loading && eventList.length === 0) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      );
+    }
+
+    if (eventList.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>{emptyMessage}</Text>
+        </View>
+      );
+    }
+
+    return (
+      <FlatList
+        data={eventList}
+        renderItem={({ item }) => <EventCard event={item} />}
+        keyExtractor={item => item.id.toString()}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.eventList}
+      />
+    );
+  };
+
+  const filterChips = [
+    { key: 'all', label: 'All' },
+    { key: 'meditation', label: 'Meditation' },
+    { key: 'support-group', label: 'Support Groups' },
+    { key: 'therapy-session', label: 'Therapy' },
+    { key: 'nature-therapy', label: 'Nature' },
+  ];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -401,9 +538,11 @@ export default function HomeScreen() {
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.profileButton}
-            onPress={() => router.push('/profile')}
+            onPress={() => router.push('/(tabs)/profile')}
           >
-            <Text style={styles.profileInitial}>J</Text>
+            <Text style={styles.profileInitial}>
+              {user?.name?.charAt(0).toUpperCase() || 'U'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -412,9 +551,17 @@ export default function HomeScreen() {
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
       >
         {/* Search Bar */}
-        <TouchableOpacity style={styles.searchBar}>
+        <TouchableOpacity style={styles.searchBar} onPress={handleSearch}>
           <Ionicons name="search" size={20} color={colors.darkGrey} style={styles.searchIcon} />
           <Text style={styles.searchInput}>Search for events, groups...</Text>
         </TouchableOpacity>
@@ -425,54 +572,54 @@ export default function HomeScreen() {
           showsHorizontalScrollIndicator={false}
           style={styles.filterChips}
         >
-          <TouchableOpacity style={[styles.chip, styles.activeChip]}>
-            <Text style={[styles.chipText, styles.activeChipText]}>All</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>Meditation</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>Support Groups</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>Therapy</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>Nature</Text>
-          </TouchableOpacity>
+          {filterChips.map(filter => (
+            <TouchableOpacity 
+              key={filter.key}
+              style={[styles.chip, selectedFilter === filter.key && styles.activeChip]}
+              onPress={() => handleFilterChange(filter.key)}
+            >
+              <Text style={[
+                styles.chipText, 
+                selectedFilter === filter.key && styles.activeChipText
+              ]}>
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
         
         {/* Featured Event */}
-        <TouchableOpacity style={styles.featuredEvent}>
-          <Image 
-            source={{ uri: 'https://images.unsplash.com/photo-1499209974431-9dddcece7f88?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80' }} 
-            style={styles.featuredImage} 
-          />
-          <View style={styles.featuredContent}>
-            <Text style={styles.featuredTitle}>Wellness Festival</Text>
-            <Text style={styles.featuredSubtitle}>May 25-26 • Central Park</Text>
+        {renderFeaturedEvent()}
+        
+        {/* Error State */}
+        {error && (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={() => fetchEvents()}
+            >
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        )}
         
         {/* Upcoming Events Section */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Upcoming Events</Text>
-          <Text style={styles.seeAllButton}>See All</Text>
+          <TouchableOpacity onPress={handleSeeAllEvents}>
+            <Text style={styles.seeAllButton}>See All</Text>
+          </TouchableOpacity>
         </View>
         
-        <FlatList
-          data={upcomingEvents}
-          renderItem={({ item }) => <EventCard event={item} />}
-          keyExtractor={item => item.id}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.eventList}
-        />
+        {renderEventList(upcomingEvents, "No upcoming events found. Try adjusting your filters.")}
         
         {/* Categories Section */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Categories</Text>
-          <Text style={styles.seeAllButton}>See All</Text>
+          <TouchableOpacity onPress={handleSeeAllEvents}>
+            <Text style={styles.seeAllButton}>See All</Text>
+          </TouchableOpacity>
         </View>
         
         <FlatList
@@ -487,48 +634,13 @@ export default function HomeScreen() {
         {/* For You Section */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>For You</Text>
-          <Text style={styles.seeAllButton}>See All</Text>
+          <TouchableOpacity onPress={handleSeeAllEvents}>
+            <Text style={styles.seeAllButton}>See All</Text>
+          </TouchableOpacity>
         </View>
         
-        <FlatList
-          data={forYou}
-          renderItem={({ item }) => <EventCard event={item} size="medium" />}
-          keyExtractor={item => item.id}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.eventList}
-        />
+        {renderEventList(recommendedEvents, "No recommendations available yet.")}
       </ScrollView>
-      
-      {/* Bottom Tab Bar
-      <View style={styles.tabBar}>
-        <NavItem 
-          icon="home" 
-          label="Home" 
-          active={true} 
-          onPress={() => {}} 
-        />
-        <NavItem 
-          icon="calendar-outline" 
-          label="Events" 
-          onPress={() => {}} 
-        />
-        <NavItem 
-          icon="chatbubbles-outline" 
-          label="Chat" 
-          onPress={() => {}} 
-        />
-        <NavItem 
-          icon="add-circle-outline" 
-          label="Create" 
-          onPress={() => {}} 
-        />
-        <NavItem 
-          icon="person-outline" 
-          label="Profile" 
-          onPress={() => router.push('/profile')} 
-        />
-      </View> */}
     </SafeAreaView>
   );
 }
