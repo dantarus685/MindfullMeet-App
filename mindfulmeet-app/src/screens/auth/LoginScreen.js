@@ -18,10 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../constants/theme';
 import TextInput from '../../components/common/TextInput';
 import { useDispatch, useSelector } from 'react-redux';
-import { loginStart, loginSuccess, loginFailure, clearError } from '../../redux/authSlice';
-import api, { API_URL } from '../../config/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
+import { loginUser, clearError } from '../../redux/authSlice';
 
 const LoginScreen = () => {
   const { colors, typography, spacing } = useTheme();
@@ -80,7 +77,7 @@ const LoginScreen = () => {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace('/');
+      router.replace('/(tabs)');
     }
   }, [isAuthenticated]);
 
@@ -116,45 +113,19 @@ const LoginScreen = () => {
 
     try {
       console.log('Starting login process...');
-      dispatch(loginStart());
       
-      // Make the actual API call
-      const response = await axios.post(`${API_URL}/api/auth/login`, {
-        email,
-        password
-      });
+      // Use the new async thunk
+      const result = await dispatch(loginUser({ email, password })).unwrap();
       
-      console.log('Login API response:', response.data);
+      console.log('Login successful:', result);
       
-      // API success - dispatch loginSuccess with the response data
-      const userData = {
-        user: response.data.user,
-        token: response.data.token
-      };
-      
-      // Store the token for future API calls
-      axios.defaults.headers.common['Authorization'] = `Bearer ${userData.token}`;
-      
-      dispatch(loginSuccess(userData));
-      console.log('Login success dispatched');
-      
-      // Navigate to home immediately
-      router.navigate('/(tabs)');
+      // Navigation will be handled by the useEffect above
+      // when isAuthenticated becomes true
       
     } catch (err) {
       console.error('Login error:', err);
-      
-      // Handle different types of errors
-      if (err.response) {
-        const errorMessage = err.response.data.error || 
-                             err.response.data.message || 
-                             'Invalid credentials';
-        dispatch(loginFailure(errorMessage));
-      } else if (err.request) {
-        dispatch(loginFailure('Network error. Please check your connection.'));
-      } else {
-        dispatch(loginFailure(err.message || 'Login failed'));
-      }
+      // Error is already handled by the async thunk and stored in Redux state
+      // The useEffect above will show the alert
     }
   };
 
