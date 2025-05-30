@@ -1,26 +1,31 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
-const cors = require('cors'); // Add this import
+const cors = require('cors');
 
 app.use(express.json());
-// Custom request logger middleware
 
-// Configure CORS - add this before other middleware
+// Enhanced CORS configuration - ADD YOUR IP HERE
 app.use(cors({
   origin: [
     'http://localhost:8081',
     'http://localhost:19006', // Expo web
-    /^exp:\/\/.*/,            // Expo Go app
-    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo
     'http://localhost:8080',  // Common webpack port
-    'exp://localhost:8081',   // Another common Expo format
-    'exp://127.0.0.1:8081'    // Another Expo format
+    'http://192.168.1.146:8081', // 👈 ADD YOUR IP + EXPO PORT
+    'http://192.168.1.146:19006', // 👈 ADD YOUR IP + EXPO WEB PORT
+    'http://192.168.1.146:8080', // 👈 ADD YOUR IP + WEBPACK PORT
+    /^exp:\/\/.*/,            // Expo Go app
+    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo (regex)
+    'exp://localhost:8081',   // Expo format
+    'exp://127.0.0.1:8081',   // Expo format
+    'exp://192.168.1.146:8081' // 👈 ADD YOUR IP + EXPO FORMAT
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
+
+// Custom request logger middleware
 app.use((req, res, next) => {
   const start = Date.now();
   const timestamp = new Date().toISOString();
@@ -63,12 +68,18 @@ app.use((req, res, next) => {
   
   next();
 });
-// Just a simple home route
+
+// Simple home route
 app.get('/', (req, res) => {
-  res.json({ message: 'API is running' });
+  res.json({ 
+    message: 'API is running',
+    timestamp: new Date().toISOString(),
+    cors: 'enabled',
+    socketio: 'ready'
+  });
 });
 
-// Import routes one by one
+// Import routes
 const authRoutes = require('./routes/authRoutes');
 const eventRoutes = require('./routes/eventRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -82,10 +93,13 @@ app.use('/api/users', userRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/support', supportRoutes);
 
-// Very simple error handler
+// Enhanced error handler
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: err.message });
+  console.error('Server Error:', err);
+  res.status(500).json({ 
+    error: err.message,
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = app;

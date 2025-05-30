@@ -1,4 +1,4 @@
-// server.js - Complete implementation
+// server.js - Enhanced version with proper CORS for your IP
 require('dotenv').config();
 const http = require('http');
 const socketIo = require('socket.io');
@@ -10,17 +10,21 @@ const { Op } = require('sequelize');
 
 const server = http.createServer(app);
 
-// Set up Socket.io with CORS
+// Enhanced Socket.io configuration with your specific IP
 const io = socketIo(server, {
   cors: {
     origin: [
       'http://localhost:8081',
       'http://localhost:19006', // Expo web
-      /^exp:\/\/.*/,            // Expo Go app
-      /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo
       'http://localhost:8080',  // Common webpack port
-      'exp://localhost:8081',   // Another common Expo format
-      'exp://127.0.0.1:8081',   // Another Expo format
+      'http://192.168.1.146:8081', // 👈 YOUR IP + EXPO PORT
+      'http://192.168.1.146:19006', // 👈 YOUR IP + EXPO WEB PORT
+      'http://192.168.1.146:8080', // 👈 YOUR IP + WEBPACK PORT
+      /^exp:\/\/.*/,            // Expo Go app
+      /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo (regex)
+      'exp://localhost:8081',   // Expo format
+      'exp://127.0.0.1:8081',   // Expo format
+      'exp://192.168.1.146:8081', // 👈 YOUR IP + EXPO FORMAT
       process.env.FRONTEND_URL || "*"
     ],
     methods: ["GET", "POST"],
@@ -28,19 +32,76 @@ const io = socketIo(server, {
     allowedHeaders: ["Content-Type", "Authorization"]
   },
   allowEIO3: true, // Allow Engine.IO v3 clients
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  // Enhanced configuration for React Native
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  maxHttpBufferSize: 1e6, // 1MB max message size
+  // Additional React Native specific settings
+  cookie: false,
+  serveClient: false
 });
 
-// Store active connections
+// Enhanced connection tracking
 const activeConnections = new Map();
-const roomMembers = new Map(); // Track who's in each room
+const roomMembers = new Map();
+const userRooms = new Map();
+const typingTimeouts = new Map();
 
-// Helper function to log with timestamp
+// Enhanced helper function to log with timestamp
 const log = (message, data = '') => {
   console.log(`[${new Date().toISOString()}] ${message}`, data);
 };
 
-// Socket authentication middleware
+// Helper functions
+const getUserRooms = async (userId) => {
+  try {
+    const rooms = await SupportRoom.findAll({
+      include: [{
+        model: User,
+        as: 'participants',
+        where: { id: userId },
+        attributes: [],
+        through: { attributes: [] }
+      }],
+      attributes: ['id']
+    });
+    return rooms.map(room => room.id);
+  } catch (error) {
+    log('❌ Error fetching user rooms:', error.message);
+    return [];
+  }
+};
+
+const cleanupTypingIndicator = (roomId, userId) => {
+  const key = `${roomId}-${userId}`;
+  const timeout = typingTimeouts.get(key);
+  if (timeout) {
+    clearTimeout(timeout);
+    typingTimeouts.delete(key);
+  }
+};
+
+const setTypingTimeout = (roomId, userId, socket) => {
+  const key = `${roomId}-${userId}`;
+  cleanupTypingIndicator(roomId, userId);
+  
+  const timeout = setTimeout(() => {
+    socket.to(`room_${roomId}`).emit('userTyping', {
+      roomId,
+      userId,
+      userName: socket.user.name,
+      isTyping: false,
+      timestamp: new Date().toISOString()
+    });
+    typingTimeouts.delete(key);
+  }, 3000);
+  
+  typingTimeouts.set(key, timeout);
+};
+
+// Enhanced socket authentication middleware
 const authenticateSocket = async (socket, next) => {
   try {
     const token = socket.handshake.auth.token || 
@@ -48,6 +109,12 @@ const authenticateSocket = async (socket, next) => {
                  socket.request.headers.authorization?.replace('Bearer ', '');
     
     log(`🔐 Socket authentication attempt for token: ${token ? 'Present' : 'Missing'}`);
+    log(`🔍 Socket handshake details:`, {
+      origin: socket.handshake.headers.origin,
+      userAgent: socket.handshake.headers['user-agent'],
+      referer: socket.handshake.headers.referer,
+      remoteAddress: socket.request.connection.remoteAddress
+    });
     
     if (!token) {
       log('❌ No token provided for socket authentication');
@@ -66,49 +133,74 @@ const authenticateSocket = async (socket, next) => {
 
     socket.userId = user.id;
     socket.user = user;
+    socket.authenticated = true;
+    socket.joinTime = new Date();
+    
     log(`✅ Socket authenticated for user: ${user.name} (${user.id})`);
     next();
   } catch (error) {
     log('❌ Socket authentication error:', error.message);
-    next(new Error('Authentication failed'));
+    if (error.name === 'JsonWebTokenError') {
+      next(new Error('Invalid token'));
+    } else if (error.name === 'TokenExpiredError') {
+      next(new Error('Token expired'));
+    } else {
+      next(new Error('Authentication failed'));
+    }
   }
 };
 
 // Apply authentication middleware
 io.use(authenticateSocket);
 
-// Socket.io connection for real-time chat
+// Enhanced Socket.io connection handler
 io.on('connection', (socket) => {
   log(`🔌 User ${socket.user.name} (${socket.userId}) connected`, `Socket ID: ${socket.id}`);
   
-  // Store connection
+  // Enhanced connection storage
   activeConnections.set(socket.userId, {
     socketId: socket.id,
     socket: socket,
     user: socket.user,
     rooms: new Set(),
-    lastActivity: new Date()
+    lastActivity: new Date(),
+    joinTime: socket.joinTime,
+    messageCount: 0,
+    status: 'online'
   });
 
-  // Send connection confirmation
+  // Get user's rooms and store them
+  getUserRooms(socket.userId).then(rooms => {
+    userRooms.set(socket.userId, new Set(rooms));
+    log(`📊 User ${socket.user.name} is in ${rooms.length} rooms`);
+  });
+
+  // Enhanced connection confirmation
   socket.emit('connected', {
     userId: socket.userId,
     user: socket.user,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    serverInfo: {
+      version: process.env.npm_package_version || '1.0.0',
+      environment: process.env.NODE_ENV || 'development'
+    }
   });
 
-  // Join a support room
+  // Enhanced join room handler
   socket.on('joinRoom', async (data) => {
     try {
       const { roomId } = data;
       log(`🚪 User ${socket.user.name} attempting to join room:`, roomId);
       
       if (!roomId) {
-        socket.emit('error', { message: 'Room ID is required' });
+        socket.emit('error', { 
+          message: 'Room ID is required',
+          code: 'MISSING_ROOM_ID'
+        });
         return;
       }
 
-      // Verify user is participant in this room
+      // Room verification logic
       const room = await SupportRoom.findByPk(roomId, {
         include: [{
           model: User,
@@ -121,79 +213,98 @@ io.on('connection', (socket) => {
 
       if (!room) {
         log(`❌ Room ${roomId} not found or access denied for user ${socket.userId}`);
-        socket.emit('error', { message: 'Room not found or access denied' });
+        socket.emit('error', { 
+          message: 'Room not found or access denied',
+          code: 'ROOM_ACCESS_DENIED'
+        });
         return;
       }
 
-      // Join the socket room
+      // Join logic with enhancements
       await socket.join(`room_${roomId}`);
       
-      // Track room membership
+      // Enhanced tracking
       const userConnection = activeConnections.get(socket.userId);
       if (userConnection) {
-        userConnection.rooms.add(roomId);
+        userConnection.rooms.add(parseInt(roomId));
         userConnection.lastActivity = new Date();
       }
 
-      // Track room members
+      // Enhanced room member tracking
       if (!roomMembers.has(roomId)) {
         roomMembers.set(roomId, new Set());
       }
       roomMembers.get(roomId).add(socket.userId);
 
+      // Add to user rooms
+      if (!userRooms.has(socket.userId)) {
+        userRooms.set(socket.userId, new Set());
+      }
+      userRooms.get(socket.userId).add(parseInt(roomId));
+
       log(`✅ User ${socket.user.name} successfully joined room ${roomId}`);
       
-      // Notify other room members
+      // Enhanced notification to other room members
       socket.to(`room_${roomId}`).emit('userJoinedRoom', {
-        roomId,
+        roomId: parseInt(roomId),
         user: {
           id: socket.user.id,
           name: socket.user.name,
           profileImage: socket.user.profileImage,
           role: socket.user.role
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        onlineCount: roomMembers.get(roomId)?.size || 1
       });
 
-      // Send confirmation to the user who joined
+      // Enhanced confirmation to the user who joined
       socket.emit('roomJoined', { 
-        roomId,
+        roomId: parseInt(roomId),
         room: {
           id: room.id,
           name: room.name,
-          type: room.type
+          type: room.type,
+          participantCount: room.participants.length
         },
         participants: room.participants,
+        onlineCount: roomMembers.get(roomId)?.size || 1,
         timestamp: new Date().toISOString()
       });
 
     } catch (error) {
       log('❌ Error joining room:', error.message);
-      socket.emit('error', { message: 'Failed to join room', error: error.message });
+      socket.emit('error', { 
+        message: 'Failed to join room', 
+        error: error.message,
+        code: 'JOIN_ROOM_ERROR'
+      });
     }
   });
 
-  // Leave a room
+  // Enhanced leave room handler
   socket.on('leaveRoom', async (data) => {
     try {
       const { roomId } = data;
       log(`🚪 User ${socket.user.name} leaving room:`, roomId);
 
       if (!roomId) {
-        socket.emit('error', { message: 'Room ID is required' });
+        socket.emit('error', { 
+          message: 'Room ID is required',
+          code: 'MISSING_ROOM_ID'
+        });
         return;
       }
 
-      // Leave the socket room
+      // Leave logic
       await socket.leave(`room_${roomId}`);
       
-      // Update tracking
+      // Enhanced tracking updates
       const userConnection = activeConnections.get(socket.userId);
       if (userConnection) {
-        userConnection.rooms.delete(roomId);
+        userConnection.rooms.delete(parseInt(roomId));
       }
 
-      // Remove from room members
+      // Enhanced room member cleanup
       if (roomMembers.has(roomId)) {
         roomMembers.get(roomId).delete(socket.userId);
         if (roomMembers.get(roomId).size === 0) {
@@ -201,35 +312,64 @@ io.on('connection', (socket) => {
         }
       }
 
-      // Notify other room members
+      // Remove from user rooms
+      if (userRooms.has(socket.userId)) {
+        userRooms.get(socket.userId).delete(parseInt(roomId));
+      }
+
+      // Clean up typing indicators
+      cleanupTypingIndicator(roomId, socket.userId);
+
+      // Enhanced notification to other room members
       socket.to(`room_${roomId}`).emit('userLeftRoom', {
-        roomId,
+        roomId: parseInt(roomId),
         userId: socket.userId,
         userName: socket.user.name,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        onlineCount: roomMembers.get(roomId)?.size || 0
       });
 
-      socket.emit('roomLeft', { roomId, timestamp: new Date().toISOString() });
+      socket.emit('roomLeft', { 
+        roomId: parseInt(roomId), 
+        timestamp: new Date().toISOString() 
+      });
+      
       log(`✅ User ${socket.user.name} left room ${roomId}`);
 
     } catch (error) {
       log('❌ Error leaving room:', error.message);
-      socket.emit('error', { message: 'Failed to leave room', error: error.message });
+      socket.emit('error', { 
+        message: 'Failed to leave room', 
+        error: error.message,
+        code: 'LEAVE_ROOM_ERROR'
+      });
     }
   });
 
-  // Handle support messages
+  // Enhanced message sending handler
   socket.on('sendMessage', async (data) => {
     try {
       const { roomId, content } = data;
       log(`📤 User ${socket.user.name} sending message to room ${roomId}:`, content?.substring(0, 50));
 
       if (!roomId || !content || content.trim().length === 0) {
-        socket.emit('error', { message: 'Room ID and message content are required' });
+        socket.emit('error', { 
+          message: 'Room ID and message content are required',
+          code: 'INVALID_MESSAGE_DATA'
+        });
         return;
       }
 
-      // Verify user is participant
+      // Add message length validation
+      if (content.trim().length > 1000) {
+        socket.emit('error', { 
+          message: 'Message too long (max 1000 characters)',
+          code: 'MESSAGE_TOO_LONG'
+        });
+        return;
+      }
+
+      // Room verification
       const room = await SupportRoom.findByPk(roomId, {
         include: [{
           model: User,
@@ -242,19 +382,22 @@ io.on('connection', (socket) => {
 
       if (!room) {
         log(`❌ Room ${roomId} not found or access denied for user ${socket.userId}`);
-        socket.emit('error', { message: 'Room not found or access denied' });
+        socket.emit('error', { 
+          message: 'Room not found or access denied',
+          code: 'ROOM_ACCESS_DENIED'
+        });
         return;
       }
 
-      // Create message in database
+      // Message creation logic
       const message = await SupportMessage.create({
         content: content.trim(),
-        roomId,
+        roomId: parseInt(roomId),
         senderId: socket.userId,
         isRead: false
       });
 
-      // Fetch complete message with sender info
+      // Fetch complete message
       const completeMessage = await SupportMessage.findByPk(message.id, {
         include: [{
           model: User,
@@ -263,10 +406,10 @@ io.on('connection', (socket) => {
         }]
       });
 
-      // Update room timestamp
+      // Update room
       await room.update({ updatedAt: new Date() });
 
-      // Format message for frontend compatibility
+      // Format message
       const formattedMessage = {
         id: completeMessage.id,
         content: completeMessage.content,
@@ -278,28 +421,40 @@ io.on('connection', (socket) => {
         sender: completeMessage.sender
       };
 
-      // Emit to all room members
+      // Emit message
       io.to(`room_${roomId}`).emit('newMessage', {
         message: formattedMessage,
-        roomId
+        roomId: parseInt(roomId),
+        timestamp: new Date().toISOString()
       });
 
-      // Send confirmation to sender
+      // Send confirmation
       socket.emit('messageSent', {
         messageId: completeMessage.id,
-        roomId,
+        roomId: parseInt(roomId),
         timestamp: completeMessage.createdAt
       });
+
+      // Update user stats
+      const userConnection = activeConnections.get(socket.userId);
+      if (userConnection) {
+        userConnection.messageCount += 1;
+        userConnection.lastActivity = new Date();
+      }
 
       log(`✅ Message sent in room ${roomId} by ${socket.user.name}`);
 
     } catch (error) {
       log('❌ Error sending message:', error.message);
-      socket.emit('error', { message: 'Failed to send message', error: error.message });
+      socket.emit('error', { 
+        message: 'Failed to send message', 
+        error: error.message,
+        code: 'SEND_MESSAGE_ERROR'
+      });
     }
   });
 
-  // Handle typing indicators
+  // Enhanced typing indicators
   socket.on('typing', (data) => {
     try {
       const { roomId, isTyping } = data;
@@ -308,39 +463,50 @@ io.on('connection', (socket) => {
         return; // Silently ignore invalid typing events
       }
 
-      // Only emit if user is actually in the room
+      // Room check logic
       const userConnection = activeConnections.get(socket.userId);
-      if (userConnection && userConnection.rooms.has(roomId)) {
+      if (userConnection && userConnection.rooms.has(parseInt(roomId))) {
+        
         socket.to(`room_${roomId}`).emit('userTyping', {
-          roomId,
+          roomId: parseInt(roomId),
           userId: socket.userId,
           userName: socket.user.name,
           isTyping,
           timestamp: new Date().toISOString()
         });
+
+        // Enhanced auto-clear timeout
+        if (isTyping) {
+          setTypingTimeout(roomId, socket.userId, socket);
+        } else {
+          cleanupTypingIndicator(roomId, socket.userId);
+        }
       }
     } catch (error) {
       log('❌ Error handling typing indicator:', error.message);
     }
   });
 
-  // Handle message read status
+  // Enhanced message read status
   socket.on('markMessagesRead', async (data) => {
     try {
       const { roomId } = data;
       log(`👁️ User ${socket.user.name} marking messages as read in room:`, roomId);
       
       if (!roomId) {
-        socket.emit('error', { message: 'Room ID is required' });
+        socket.emit('error', { 
+          message: 'Room ID is required',
+          code: 'MISSING_ROOM_ID'
+        });
         return;
       }
 
-      // Update messages to read status
+      // Update logic
       const [updatedCount] = await SupportMessage.update(
         { isRead: true },
         {
           where: {
-            roomId,
+            roomId: parseInt(roomId),
             senderId: { [Op.ne]: socket.userId },
             isRead: false
           }
@@ -349,47 +515,61 @@ io.on('connection', (socket) => {
 
       log(`✅ Marked ${updatedCount} messages as read in room ${roomId}`);
 
-      // Notify other room members
+      // Notifications
       socket.to(`room_${roomId}`).emit('messagesRead', {
-        roomId,
+        roomId: parseInt(roomId),
         userId: socket.userId,
         userName: socket.user.name,
         timestamp: new Date().toISOString()
       });
 
-      // Confirm to sender
+      // Confirmation
       socket.emit('messagesMarkedRead', {
-        roomId,
+        roomId: parseInt(roomId),
         count: updatedCount,
         timestamp: new Date().toISOString()
       });
 
     } catch (error) {
       log('❌ Error marking messages as read:', error.message);
-      socket.emit('error', { message: 'Failed to mark messages as read', error: error.message });
+      socket.emit('error', { 
+        message: 'Failed to mark messages as read', 
+        error: error.message,
+        code: 'MARK_READ_ERROR'
+      });
     }
   });
 
-  // Handle ping for connection testing
+  // Enhanced ping handling
   socket.on('ping', (data) => {
-    socket.emit('pong', {
+    const responseData = {
       ...data,
       serverTime: new Date().toISOString(),
-      userId: socket.userId
-    });
+      userId: socket.userId,
+      socketId: socket.id,
+      uptime: process.uptime()
+    };
+    
+    socket.emit('pong', responseData);
+    
+    // Update last activity
+    const userConnection = activeConnections.get(socket.userId);
+    if (userConnection) {
+      userConnection.lastActivity = new Date();
+    }
   });
 
-  // Handle user status updates
+  // Enhanced user status updates
   socket.on('updateStatus', (data) => {
     const { status = 'online' } = data;
     
-    // Update user connection info
+    // Update logic with enhancements
     const userConnection = activeConnections.get(socket.userId);
     if (userConnection) {
       userConnection.lastActivity = new Date();
       userConnection.status = status;
       
-      // Notify all rooms this user is in
+      // Room notifications
       userConnection.rooms.forEach(roomId => {
         socket.to(`room_${roomId}`).emit('userStatusChange', {
           roomId,
@@ -402,14 +582,25 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Handle disconnection
+  // Enhanced disconnection handling
   socket.on('disconnect', (reason) => {
     log(`❌ User ${socket.user.name} (${socket.userId}) disconnected:`, reason);
     
     const userConnection = activeConnections.get(socket.userId);
     if (userConnection) {
-      // Notify all rooms this user was in
+      // Enhanced session stats
+      const sessionDuration = new Date() - userConnection.joinTime;
+      log(`📊 Session stats for ${socket.user.name}:`, {
+        duration: `${Math.round(sessionDuration / 1000)}s`,
+        messages: userConnection.messageCount,
+        rooms: userConnection.rooms.size
+      });
+
+      // Room notification logic
       userConnection.rooms.forEach(roomId => {
+        // Clean up typing indicators
+        cleanupTypingIndicator(roomId, socket.userId);
+        
         socket.to(`room_${roomId}`).emit('userLeftRoom', {
           roomId,
           userId: socket.userId,
@@ -418,60 +609,142 @@ io.on('connection', (socket) => {
           timestamp: new Date().toISOString()
         });
         
-        // Remove from room members tracking
-        if (roomMembers.has(roomId)) {
-          roomMembers.get(roomId).delete(socket.userId);
-          if (roomMembers.get(roomId).size === 0) {
-            roomMembers.delete(roomId);
+        // Room cleanup
+        if (roomMembers.has(roomId.toString())) {
+          roomMembers.get(roomId.toString()).delete(socket.userId);
+          if (roomMembers.get(roomId.toString()).size === 0) {
+            roomMembers.delete(roomId.toString());
           }
         }
       });
     }
     
+    // Cleanup with enhancements
     activeConnections.delete(socket.userId);
+    userRooms.delete(socket.userId);
+    
+    // Clean up typing timeouts for this user
+    const userTypingKeys = Array.from(typingTimeouts.keys()).filter(key => 
+      key.endsWith(`-${socket.userId}`)
+    );
+    userTypingKeys.forEach(key => {
+      clearTimeout(typingTimeouts.get(key));
+      typingTimeouts.delete(key);
+    });
   });
 
-  // Handle errors
+  // Enhanced error handling
   socket.on('error', (error) => {
     log('❌ Socket error:', error);
+    
+    // Enhanced error response
+    socket.emit('error', {
+      message: 'Socket error occurred',
+      code: 'SOCKET_ERROR',
+      timestamp: new Date().toISOString(),
+      userId: socket.userId
+    });
   });
 });
 
-// Periodic cleanup of inactive connections
-setInterval(() => {
+// Enhanced periodic cleanup
+const cleanupInterval = setInterval(() => {
   const now = new Date();
   const inactiveThreshold = 5 * 60 * 1000; // 5 minutes
   
   for (const [userId, connection] of activeConnections.entries()) {
-    if (now - connection.lastActivity > inactiveThreshold) {
+    const inactiveTime = now - connection.lastActivity;
+    
+    if (inactiveTime > inactiveThreshold) {
       log(`🧹 Cleaning up inactive connection for user:`, userId);
-      connection.socket.disconnect();
+      
+      // Enhanced cleanup
+      if (connection.socket && connection.socket.connected) {
+        connection.socket.emit('forceDisconnect', {
+          reason: 'inactivity',
+          message: 'Disconnected due to inactivity'
+        });
+        connection.socket.disconnect();
+      }
       activeConnections.delete(userId);
+      userRooms.delete(userId);
     }
   }
+
+  // Clean up empty rooms
+  for (const [roomId, members] of roomMembers.entries()) {
+    if (members.size === 0) {
+      roomMembers.delete(roomId);
+    }
+  }
+
+  // Clean up old typing timeouts
+  const oldTimeouts = [];
+  for (const [key, timeout] of typingTimeouts.entries()) {
+    if (timeout._idleStart && (Date.now() - timeout._idleStart > 5 * 60 * 1000)) {
+      oldTimeouts.push(key);
+    }
+  }
+  
+  oldTimeouts.forEach(key => {
+    clearTimeout(typingTimeouts.get(key));
+    typingTimeouts.delete(key);
+  });
+
+  // Enhanced logging
+  if (activeConnections.size > 0) {
+    log(`📊 Active connections: ${activeConnections.size}, Active rooms: ${roomMembers.size}`);
+  }
 }, 60000); // Run every minute
+
+// Enhanced health check endpoint
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
+  
+  res.json({
+    status: 'healthy',
+    uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+    memory: {
+      used: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+      total: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`
+    },
+    connections: {
+      active: activeConnections.size,
+      rooms: roomMembers.size,
+      typing: typingTimeouts.size
+    },
+    database: 'connected',
+    cors: 'enabled for 192.168.1.146',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Start server
 const PORT = process.env.PORT || 5000;
 
-// Add better error handling for database connection
+// Enhanced server startup
 const startServer = async () => {
   try {
     log('🔗 Connecting to database...');
     
-    // Test the connection first
+    // Database connection logic
     await db.sequelize.authenticate();
     log('✅ Database connection established successfully');
     
-    // Then sync all models
+    // Model sync logic
     log('📊 Creating/updating database tables...');
     await db.sequelize.sync(); // no force = just create if not exists
     log('✅ All models synchronized successfully');
     
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       log(`🚀 Server running on port ${PORT}`);
+      log(`🌐 Server accessible at:`);
+      log(`   - http://localhost:${PORT}`);
+      log(`   - http://192.168.1.146:${PORT}`);
       log('📡 Socket.io ready for real-time chat');
-      log(`🌐 CORS origins configured for development and production`);
+      log(`🔍 Health check available at http://192.168.1.146:${PORT}/health`);
+      log(`🎯 CORS configured for React Native on 192.168.1.146`);
     });
   } catch (err) {
     log('❌ Database connection/sync error:', err.message);
@@ -482,16 +755,32 @@ const startServer = async () => {
 
 startServer();
 
-// Graceful shutdown
+// Enhanced graceful shutdown
 const gracefulShutdown = () => {
   log('📡 Shutting down server gracefully...');
   
-  // Close all socket connections
+  // Clear cleanup interval
+  clearInterval(cleanupInterval);
+  
+  // Clear all typing timeouts
+  typingTimeouts.forEach(timeout => clearTimeout(timeout));
+  typingTimeouts.clear();
+  
+  // Notify users about shutdown
+  activeConnections.forEach((connection) => {
+    if (connection.socket && connection.socket.connected) {
+      connection.socket.emit('serverShutdown', {
+        message: 'Server is shutting down for maintenance',
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+  
+  // Shutdown logic
   io.close(() => {
     log('✅ All socket connections closed');
   });
   
-  // Close HTTP server
   server.close(() => {
     log('✅ HTTP server closed');
     process.exit(0);
@@ -504,22 +793,28 @@ const gracefulShutdown = () => {
   }, 10000);
 };
 
-// Handle shutdown signals
+// Signal handlers
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
-// Handle unhandled promise rejections
+// Error handlers
 process.on('unhandledRejection', (err) => {
   log('❌ UNHANDLED REJECTION:', err.message);
   console.error(err);
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
   log('❌ UNCAUGHT EXCEPTION:', err.message);
   console.error(err);
   gracefulShutdown();
 });
 
-// Export for testing
-module.exports = { server, io, activeConnections, roomMembers };
+// Export with enhancements
+module.exports = { 
+  server, 
+  io, 
+  activeConnections, 
+  roomMembers,
+  userRooms,
+  typingTimeouts
+};
