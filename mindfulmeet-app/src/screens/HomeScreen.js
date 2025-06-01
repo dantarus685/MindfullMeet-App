@@ -277,7 +277,7 @@ export default function HomeScreen() {
     },
     featuredContent: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0,0,0,0.3)',
+      backgroundColor: 'rgba(98, 20, 20, 0.69)',
       padding: spacing.lg,
       justifyContent: 'flex-end',
     },

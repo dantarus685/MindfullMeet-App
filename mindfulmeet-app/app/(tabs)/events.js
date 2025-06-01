@@ -196,7 +196,7 @@ const MapPreviewModal = ({ visible, onClose, location, title, address }) => {
                 />
                 <View style={modalStyles.mapOverlay}>
                   <Text style={modalStyles.overlayText}>
-                    Tap "Get Directions" to open in your maps app
+                    Tap Get Directions to open in your maps app
                   </Text>
                 </View>
               </>
