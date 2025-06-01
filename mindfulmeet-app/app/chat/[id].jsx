@@ -1,4 +1,4 @@
-// app/chat/[id].jsx - COMPLETE FIXED VERSION
+// app/chat/[id].jsx - COMPLETE FIXED VERSION - Enhanced message loading
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
@@ -43,55 +43,78 @@ const MessageBubble = React.memo(function MessageBubble({ message, isCurrentUser
   const { colors, spacing } = useTheme();
   
   const styles = StyleSheet.create({
-    container: {
-      flexDirection: isCurrentUser ? 'row-reverse' : 'row',
+    outerContainer: {
+      width: '100%',
       marginVertical: spacing.xs,
       paddingHorizontal: spacing.md,
-      alignItems: 'flex-end',
     },
     senderContainer: {
-      marginBottom: 2,
-      paddingHorizontal: spacing.md,
+      marginBottom: 4,
+      alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
+      paddingHorizontal: spacing.xs,
     },
     senderText: {
       fontSize: 12,
       color: colors.textSecondary,
-      textAlign: isCurrentUser ? 'right' : 'left',
+      fontWeight: '500',
+    },
+    messageContainer: {
+      flexDirection: 'row',
+      justifyContent: isCurrentUser ? 'flex-end' : 'flex-start',
+      alignItems: 'flex-end',
     },
     bubble: {
-      backgroundColor: isCurrentUser ? colors.primary : colors.lightGrey,
+      backgroundColor: isCurrentUser ? '#DCF8C6' : colors.white || '#FFFFFF',
       borderRadius: 18,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
-      maxWidth: '75%',
+      maxWidth: '80%',
+      minWidth: '20%',
+      // WhatsApp-style bubble tails
       borderBottomRightRadius: isCurrentUser ? 4 : 18,
       borderBottomLeftRadius: isCurrentUser ? 18 : 4,
-      elevation: 1,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      // Enhanced shadows for better depth
+      elevation: 2,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
+      shadowOpacity: 0.15,
+      shadowRadius: 3,
+      // Border for received messages (WhatsApp style)
+      borderWidth: isCurrentUser ? 0 : 0.5,
+      borderColor: isCurrentUser ? 'transparent' : '#E0E0E0',
     },
     optimisticBubble: {
       opacity: 0.7,
     },
+    messageContent: {
+      width: '100%',
+    },
     messageText: {
-      color: isCurrentUser ? colors.white : colors.text,
+      color: isCurrentUser ? '#000000' : colors.text || '#000000',
       fontSize: 16,
       lineHeight: 20,
+      marginBottom: 2,
     },
     timeContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: 4,
+      justifyContent: isCurrentUser ? 'flex-end' : 'flex-start',
+      marginTop: 2,
     },
     timeText: {
-      color: isCurrentUser ? 'rgba(255,255,255,0.8)' : colors.textSecondary,
-      fontSize: 12,
-      textAlign: isCurrentUser ? 'right' : 'left',
+      color: isCurrentUser ? 'rgba(0,0,0,0.5)' : colors.textSecondary || 'rgba(0,0,0,0.5)',
+      fontSize: 11,
+      fontWeight: '400',
     },
     statusIcon: {
       marginLeft: 4,
+    },
+    // WhatsApp-style avatar space for group chats
+    avatarSpace: {
+      width: 32,
+      marginRight: spacing.xs,
     }
   });
 
@@ -109,36 +132,45 @@ const MessageBubble = React.memo(function MessageBubble({ message, isCurrentUser
 
   const getStatusIcon = () => {
     if (message.isOptimistic) {
-      return <Ionicons name="time-outline" size={12} color="rgba(255,255,255,0.6)" />;
+      return <Ionicons name="time-outline" size={12} color="rgba(0,0,0,0.4)" />;
     }
     if (isCurrentUser) {
       return message.isRead ? 
-        <Ionicons name="checkmark-done" size={12} color="rgba(255,255,255,0.8)" /> :
-        <Ionicons name="checkmark" size={12} color="rgba(255,255,255,0.6)" />;
+        <Ionicons name="checkmark-done" size={12} color="#4FC3F7" /> :
+        <Ionicons name="checkmark" size={12} color="rgba(0,0,0,0.4)" />;
     }
     return null;
   };
 
   return (
-    <View>
+    <View style={styles.outerContainer}>
+      {/* Sender name for group chats */}
       {showSender && message.sender && !isCurrentUser && (
         <View style={styles.senderContainer}>
           <Text style={styles.senderText}>{message.sender.name}</Text>
         </View>
       )}
-      <View style={styles.container}>
+      
+      <View style={styles.messageContainer}>
+        {/* Avatar space for group chats (left side only) */}
+        {!isCurrentUser && showSender && (
+          <View style={styles.avatarSpace} />
+        )}
+        
         <View style={[
           styles.bubble, 
           message.isOptimistic && styles.optimisticBubble
         ]}>
-          <Text style={styles.messageText}>{message.content}</Text>
-          <View style={styles.timeContainer}>
-            <Text style={styles.timeText}>{formatTime(message.createdAt)}</Text>
-            {isCurrentUser && (
-              <View style={styles.statusIcon}>
-                {getStatusIcon()}
-              </View>
-            )}
+          <View style={styles.messageContent}>
+            <Text style={styles.messageText}>{message.content}</Text>
+            <View style={styles.timeContainer}>
+              <Text style={styles.timeText}>{formatTime(message.createdAt)}</Text>
+              {isCurrentUser && (
+                <View style={styles.statusIcon}>
+                  {getStatusIcon()}
+                </View>
+              )}
+            </View>
           </View>
         </View>
       </View>
@@ -396,10 +428,13 @@ export default function ChatRoomScreen() {
   // Local state
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const [socketJoinAttempted, setSocketJoinAttempted] = useState(false);
   
   // Refs
   const flatListRef = useRef(null);
   const lastMessageId = useRef(null);
+  const socketEventListeners = useRef([]);
 
   const styles = StyleSheet.create({
     container: {
@@ -485,17 +520,17 @@ export default function ChatRoomScreen() {
       color: colors.white,
       fontWeight: 'bold',
     },
-    reconnectBanner: {
-      backgroundColor: '#FFF3CD',
+    connectionBanner: {
+      backgroundColor: '#E3F2FD',
       borderBottomWidth: 1,
-      borderBottomColor: '#FFEAA7',
+      borderBottomColor: '#BBDEFB',
       paddingVertical: spacing.sm,
       paddingHorizontal: spacing.md,
       flexDirection: 'row',
       alignItems: 'center',
     },
-    reconnectText: {
-      color: '#856404',
+    connectionText: {
+      color: '#1976D2',
       fontSize: 14,
       marginLeft: spacing.sm,
     }
@@ -503,7 +538,7 @@ export default function ChatRoomScreen() {
 
   // Connection status subtitle
   const getConnectionSubtitle = useMemo(() => {
-    if (!isConnected) return 'Offline • API only';
+    if (!isConnected) return 'Offline mode • Limited features';
     
     const onlineCount = Object.keys(onlineUsers).length;
     if (room?.type === 'one-on-one') {
@@ -517,62 +552,123 @@ export default function ChatRoomScreen() {
     return 'Connected';
   }, [isConnected, onlineUsers, room]);
 
-  // Load messages function
+  // **ENHANCED: Load messages with better error handling and loading states**
   const loadMessages = useCallback(async () => {
+    if (!roomId || !currentUser) {
+      console.warn('⚠️ Cannot load messages - missing roomId or currentUser');
+      return;
+    }
+
     try {
       console.log('📥 Loading messages for room:', roomId);
-      await dispatch(fetchRoomMessages({ roomId, page: 1, limit: 50 })).unwrap();
-    } catch (error) {
-      console.error('Failed to load messages:', error);
-      Alert.alert('Error', 'Failed to load messages. Please try again.');
-    }
-  }, [dispatch, roomId]);
-
-  // Setup room and socket connection
-  useEffect(() => {
-    if (roomId && currentUser) {
-      console.log('🔄 Setting up chat room:', roomId);
-      
-      dispatch(setActiveRoom({ id: roomId, name: roomName }));
-      loadMessages();
       
       // Clear any existing errors
       dispatch(clearError({ type: 'messages', roomId }));
       
-      if (socketService.getConnectionStatus()) {
-        console.log('🚪 Joining socket room:', roomId);
-        socketService.joinRoom(roomId);
-      }
+      const result = await dispatch(fetchRoomMessages({ roomId, page: 1, limit: 50 })).unwrap();
+      
+      console.log('✅ Messages loaded successfully:', result.data?.messages?.length || 0, 'messages');
+      setMessagesLoaded(true);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to load messages:', error);
+      
+      // Don't show alert for initial load failures, let the UI handle it
+      throw error;
     }
+  }, [dispatch, roomId, currentUser]);
+
+  // **ENHANCED: Setup room with better socket handling**
+  useEffect(() => {
+    if (!roomId || !currentUser) return;
+
+    console.log('🔄 Setting up chat room:', roomId);
+    
+    // Set active room in Redux
+    dispatch(setActiveRoom({ id: roomId, name: roomName }));
+    
+    // Load messages first (this is crucial for getting previous chats)
+    if (!messagesLoaded) {
+      loadMessages();
+    }
+    
+    // Socket event listeners for this room
+    const handleRoomJoined = (data) => {
+      if (data.roomId === roomId) {
+        console.log('✅ Socket room joined confirmed:', data.roomId);
+        
+        // **KEY FIX: Check if we got message history from socket**
+        if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
+          console.log('📚 Received message history from socket:', data.messages.length, 'messages');
+          // Socket service will handle adding these to Redux
+        }
+      }
+    };
+
+    const handleNewMessage = (data) => {
+      if (data.roomId === roomId) {
+        console.log('📨 New message for this room:', data.message?.content?.substring(0, 50) + '...');
+        // Auto-scroll when new message arrives
+        setTimeout(() => {
+          if (flatListRef.current) {
+            flatListRef.current.scrollToEnd({ animated: true });
+          }
+        }, 100);
+      }
+    };
+
+    // Add socket event listeners
+    const removeRoomJoinedListener = socketService.addEventListener('roomJoined', handleRoomJoined);
+    const removeNewMessageListener = socketService.addEventListener('newMessage', handleNewMessage);
+    
+    socketEventListeners.current = [removeRoomJoinedListener, removeNewMessageListener];
     
     return () => {
       console.log('🧹 Cleaning up chat room:', roomId);
+      
+      // Remove socket event listeners
+      socketEventListeners.current.forEach(removeListener => removeListener());
+      socketEventListeners.current = [];
+      
+      // Leave socket room
       if (socketService.getConnectionStatus()) {
         socketService.leaveRoom(roomId);
       }
+      
+      // Clear active room
       dispatch(clearActiveRoom());
     };
-  }, [roomId, currentUser, roomName, dispatch, loadMessages]);
+  }, [roomId, currentUser, roomName, dispatch, messagesLoaded, loadMessages]);
 
-  // Handle socket reconnection
+  // **ENHANCED: Better socket room joining logic**
   useEffect(() => {
-    if (isConnected && roomId && socketService.getConnectionStatus()) {
-      console.log('🔌 Socket connected, joining room:', roomId);
+    if (isConnected && roomId && socketService.getConnectionStatus() && !socketJoinAttempted) {
+      console.log('🚪 Socket connected, joining room:', roomId);
+      
+      // Add a small delay to ensure socket is fully ready
       setTimeout(() => {
-        socketService.joinRoom(roomId);
+        const joined = socketService.joinRoom(roomId);
+        if (joined) {
+          setSocketJoinAttempted(true);
+          console.log('✅ Socket room join initiated');
+        } else {
+          console.warn('⚠️ Failed to join socket room');
+        }
       }, 500);
     }
-  }, [isConnected, roomId]);
+  }, [isConnected, roomId, socketJoinAttempted]);
 
-  // Auto-scroll to bottom when new messages arrive (but prevent duplicate scrolling)
+  // **ENHANCED: Auto-scroll to bottom when new messages arrive**
   useEffect(() => {
     if (messages.length > 0 && flatListRef.current) {
       const latestMessage = messages[messages.length - 1];
       
-      // Only scroll if it's a new message
+      // Only scroll if it's a new message (not already processed)
       if (latestMessage.id !== lastMessageId.current) {
         lastMessageId.current = latestMessage.id;
         
+        // Delay scroll to ensure message is rendered
         const timer = setTimeout(() => {
           try {
             flatListRef.current?.scrollToEnd({ animated: true });
@@ -590,6 +686,7 @@ export default function ChatRoomScreen() {
   useFocusEffect(
     useCallback(() => {
       if (roomId) {
+        console.log('👁️ Screen focused, marking messages as read');
         dispatch(markRoomMessagesAsRead(roomId));
         if (socketService.getConnectionStatus()) {
           socketService.markMessagesAsRead(roomId);
@@ -598,7 +695,7 @@ export default function ChatRoomScreen() {
     }, [dispatch, roomId])
   );
 
-  // FIXED: Send message handler - prevent duplicates
+  // **FIXED: Enhanced send message handler**
   const handleSendMessage = useCallback(async (content) => {
     if (!content.trim() || sending) return;
 
@@ -607,54 +704,53 @@ export default function ChatRoomScreen() {
     const tempId = `temp_${Date.now()}_${Math.random()}`;
 
     try {
-      console.log('📤 Sending message:', messageContent);
+      console.log('📤 Sending message:', messageContent.substring(0, 50) + '...');
       
-      // Add optimistic message immediately for UI feedback
+      // Add optimistic message for immediate UI feedback
       dispatch(addOptimisticMessage({ 
         roomId, 
         content: messageContent,
         tempId 
       }));
 
-      // Scroll to show optimistic message
+      // Auto-scroll to show optimistic message
       setTimeout(() => {
         if (flatListRef.current) {
           flatListRef.current.scrollToEnd({ animated: true });
         }
       }, 50);
       
-      // FIXED: Only send via ONE method to prevent duplicates
+      // **ENHANCED: Try socket first, fallback to API**
       let messageSent = false;
       
-      // Try socket first if connected
+      // Try socket if connected
       if (isConnected && socketService.getConnectionStatus()) {
         console.log('🚀 Sending via socket...');
         const socketTempId = socketService.sendMessage(roomId, messageContent);
         
         if (socketTempId) {
           messageSent = true;
-          console.log('✅ Message sent via socket with tempId:', socketTempId);
-          
-          // The optimistic message will be replaced by the real message from socket event
-          // No need to remove it manually here
+          console.log('✅ Message sent via socket');
         }
       }
       
-      // Only use API as fallback if socket completely failed
+      // Fallback to API if socket failed or not connected
       if (!messageSent) {
-        console.log('🔄 Socket not available, using API fallback...');
+        console.log('🔄 Using API fallback...');
         
         try {
-          const result = await dispatch(sendMessage({ roomId, content: messageContent })).unwrap();
+          await dispatch(sendMessage({ roomId, content: messageContent })).unwrap();
           
-          // Remove optimistic message since API will add the real one
+          // Remove optimistic message as API response will add the real one
           dispatch(removeOptimisticMessage({ roomId, tempId }));
           
           console.log('✅ Message sent via API');
         } catch (apiError) {
           console.error('❌ API send failed:', apiError);
+          
           // Remove failed optimistic message
           dispatch(removeOptimisticMessage({ roomId, tempId }));
+          
           throw apiError;
         }
       }
@@ -718,11 +814,16 @@ export default function ChatRoomScreen() {
       <Text style={styles.emptyText}>
         No messages yet. Start the conversation!
       </Text>
+      {!isConnected && (
+        <Text style={[styles.emptyText, { fontSize: 14, marginTop: spacing.sm }]}>
+          Real-time messaging will be available when connection is restored.
+        </Text>
+      )}
     </View>
-  ), [styles, colors]);
+  ), [styles, colors, isConnected, spacing]);
 
-  // Loading state
-  if (loading.messages[roomId] && messages.length === 0) {
+  // **ENHANCED: Better loading state**
+  if (loading.messages[roomId] && messages.length === 0 && !messagesLoaded) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -732,6 +833,7 @@ export default function ChatRoomScreen() {
           </TouchableOpacity>
           <View style={styles.headerContent}>
             <Text style={styles.headerTitle}>{roomName}</Text>
+            <Text style={styles.headerSubtitle}>Loading...</Text>
           </View>
         </View>
         <View style={styles.loadingContainer}>
@@ -789,17 +891,17 @@ export default function ChatRoomScreen() {
         <View 
           style={[
             styles.connectionIndicator, 
-            { backgroundColor: isConnected ? '#4CAF50' : '#F44336' }
+            { backgroundColor: isConnected ? '#4CAF50' : '#FFC107' }
           ]} 
         />
       </View>
 
-      {/* Reconnection banner */}
+      {/* Connection banner */}
       {!isConnected && (
-        <View style={styles.reconnectBanner}>
-          <Ionicons name="warning" size={16} color="#856404" />
-          <Text style={styles.reconnectText}>
-            Connection lost. Messages will be sent when reconnected.
+        <View style={styles.connectionBanner}>
+          <Ionicons name="cloud-offline-outline" size={16} color="#1976D2" />
+          <Text style={styles.connectionText}>
+            Offline mode - Real-time features limited
           </Text>
         </View>
       )}
@@ -824,6 +926,10 @@ export default function ChatRoomScreen() {
           maxToRenderPerBatch={20}
           windowSize={10}
           initialNumToRender={20}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
         />
         
         {/* Typing indicator */}
@@ -834,7 +940,7 @@ export default function ChatRoomScreen() {
           onSendMessage={handleSendMessage}
           onTyping={handleTyping}
           disabled={sending}
-          placeholder={isConnected ? "Type a message..." : "Connecting..."}
+          placeholder={isConnected ? "Type a message..." : "Type a message (offline)..."}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>

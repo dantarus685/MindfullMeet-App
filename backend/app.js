@@ -1,4 +1,4 @@
-// app.js - Fixed Express app with Socket.IO setup
+// app.js - Fixed Express app with Socket.IO setup (REMOVE DUPLICATE HANDLERS)
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -158,35 +158,12 @@ console.log('✅ /api/tracking routes registered');
 app.use('/api/support', supportRoutes);
 console.log('✅ /api/support routes registered');
 
-// Setup Socket.IO chat handlers
+// Setup Socket.IO chat handlers - THIS IS THE ONLY PLACE WHERE SOCKET HANDLERS SHOULD BE SET UP
 console.log('📡 Setting up Socket.IO chat handlers...');
 setupChatHandlers(io);
 console.log('✅ Socket.IO chat handlers configured');
 
-// Socket.IO connection logging with better error handling
-io.on('connection', (socket) => {
-  console.log(`🔌 Socket connected: ${socket.id} (User: ${socket.user ? socket.user.name : 'Unknown'})`);
-  
-  socket.emit('connected', {
-    socketId: socket.id,
-    timestamp: new Date().toISOString(),
-    message: 'Connected to MindfullMeet server',
-    authenticated: socket.authenticated || false
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log(`❌ Socket disconnected: ${socket.id} - Reason: ${reason}`);
-  });
-
-  socket.on('error', (error) => {
-    console.error(`❌ Socket error: ${socket.id}`, error);
-    socket.emit('error', {
-      message: 'Socket error occurred',
-      code: 'SOCKET_ERROR',
-      timestamp: new Date().toISOString()
-    });
-  });
-});
+// **REMOVED DUPLICATE CONNECTION HANDLER** - All socket logic is now in chatHandler.js
 
 // Handle 404 errors for API routes only
 app.use('/api/*', (req, res) => {

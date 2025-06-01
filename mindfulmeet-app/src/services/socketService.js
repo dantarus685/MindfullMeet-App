@@ -1,4 +1,4 @@
-// src/services/socketService.js - COMPLETE FIXED VERSION
+// src/services/socketService.js - FIXED VERSION WITH BETTER AUTO-CONNECTION
 import io from 'socket.io-client';
 import { Platform } from 'react-native';
 import { store } from '../redux/store';
@@ -9,7 +9,9 @@ import {
   setUserOnlineStatus,
   markRoomMessagesAsRead,
   updateRoomOrder,
-  removeOptimisticMessage
+  removeOptimisticMessage,
+  prependMessages,
+  setMessagePagination
 } from '../redux/chatSlice';
 
 const getSocketUrl = () => {
@@ -35,11 +37,17 @@ class SocketService {
     this.lastToken = null;
     this.reconnectTimer = null;
     this.pingInterval = null;
+    this.autoConnectEnabled = true;
     
     // Track sent messages to prevent duplicates
     this.sentMessages = new Map(); // tempId -> real message data
     this.pendingMessages = new Set(); // track messages being sent
     this.processedMessageIds = new Set(); // prevent duplicate processing
+    
+    // Auto-connection state tracking
+    this.lastConnectedUser = null;
+    this.lastConnectedToken = null;
+    this.isAutoConnecting = false;
   }
 
   log(message, data = '') {
@@ -52,13 +60,66 @@ class SocketService {
     console.error(`[SocketService] ${message}`, data);
   }
 
-  // IMPROVED AUTO-CONNECTION
+  // IMPROVED AUTO-CONNECTION - This is the key fix!
+  async autoConnect() {
+    if (this.isAutoConnecting) {
+      this.log('Auto-connection already in progress, skipping');
+      return;
+    }
+    
+    this.isAutoConnecting = true;
+
+    try {
+      const state = store.getState();
+      const user = state.auth?.user;
+      const token = state.auth?.token;
+
+      // Check if we should auto-connect
+      if (!user || !token) {
+        this.log('⚠️ No user or token for auto-connection');
+        return;
+      }
+
+      // Check if already connected with same user/token
+      if (this.isConnected && 
+          this.lastConnectedUser?.id === user.id && 
+          this.lastConnectedToken === token) {
+        this.log('✅ Already connected with same user, skipping auto-connect');
+        return;
+      }
+
+      this.log('🚀 Starting auto-connection...', { 
+        userId: user.id, 
+        userName: user.name,
+        hasToken: !!token 
+      });
+
+      // Store current user/token for tracking
+      this.lastConnectedUser = user;
+      this.lastConnectedToken = token;
+
+      // Connect
+      const success = await this.connect(token);
+      
+      if (success) {
+        this.log('✅ Auto-connection successful!');
+      } else {
+        this.error('❌ Auto-connection failed');
+      }
+    } catch (error) {
+      this.error('❌ Auto-connection error:', error.message);
+    } finally {
+      this.isAutoConnecting = false;
+    }
+  }
+
+  // Enhanced connect method
   async connect(token, retryCount = 0) {
     const maxRetries = 3;
     
-    // If already connected, return success
-    if (this.isConnected && this.socket?.connected) {
-      this.log('Already connected, skipping connection attempt');
+    // If already connected with same token, return success
+    if (this.isConnected && this.socket?.connected && this.lastToken === token) {
+      this.log('Already connected with same token, skipping connection attempt');
       return true;
     }
 
@@ -256,12 +317,47 @@ class SocketService {
       this._emitToListeners('chatConnected', data);
     });
 
-    // ROOM EVENTS
+    // ROOM EVENTS - FIXED TO HANDLE MESSAGE HISTORY
     this.socket.on('roomJoined', (data) => {
-      this.log('✅ Room joined:', data);
+      this.log('✅ Room joined with data:', data);
+      
       if (data.roomId) {
         this.currentRooms.add(data.roomId);
       }
+      
+      // **FIXED: Handle message history from room join**
+      if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
+        this.log(`📚 Received ${data.messages.length} messages from room join`);
+        
+        const state = store.getState();
+        const existingMessages = state.chat.messagesByRoom[data.roomId] || [];
+        
+        // Only add messages if we don't have any yet (avoid duplicates)
+        if (existingMessages.length === 0) {
+          this.log('💾 Adding message history to Redux store');
+          
+          // Format messages properly
+          const formattedMessages = data.messages.map(message => ({
+            id: message.id,
+            content: message.content,
+            senderId: message.senderId,
+            roomId: message.roomId || data.roomId,
+            isRead: message.isRead || false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+            sender: message.sender || null
+          }));
+          
+          // Use prependMessages to add them chronologically
+          store.dispatch(prependMessages({ 
+            roomId: data.roomId, 
+            messages: formattedMessages 
+          }));
+        } else {
+          this.log('⚠️ Room already has messages, skipping history from socket');
+        }
+      }
+      
       this._emitToListeners('roomJoined', data);
     });
 
@@ -672,6 +768,9 @@ class SocketService {
     this.sentMessages.clear();
     this.pendingMessages.clear();
     this.processedMessageIds.clear();
+    this.lastConnectedUser = null;
+    this.lastConnectedToken = null;
+    this.autoConnectEnabled = false;
     
     this._cleanup();
   }
@@ -717,6 +816,10 @@ class SocketService {
       pendingMessages: this.pendingMessages.size,
       sentMessages: this.sentMessages.size,
       processedMessages: this.processedMessageIds.size,
+      autoConnectEnabled: this.autoConnectEnabled,
+      isAutoConnecting: this.isAutoConnecting,
+      lastConnectedUser: this.lastConnectedUser?.name || null,
+      lastConnectedToken: this.lastConnectedToken ? this.lastConnectedToken.substring(0, 20) + '...' : null,
       eventListeners: Object.fromEntries(
         Array.from(this.eventListeners.entries()).map(([key, set]) => [key, set.size])
       ),
@@ -735,49 +838,75 @@ class SocketService {
     
     return info;
   }
+
+  // Enable/disable auto-connection
+  setAutoConnectEnabled(enabled) {
+    this.autoConnectEnabled = enabled;
+    this.log('🔧 Auto-connect:', enabled ? 'enabled' : 'disabled');
+  }
 }
 
 const socketService = new SocketService();
 
-// AUTO-INITIALIZE when auth state changes - THIS IS THE KEY MISSING PIECE!
+// **FIXED AUTO-INITIALIZATION** - This is the main fix for auto-connection!
 let currentUser = null;
 let currentToken = null;
+let initializationTimer = null;
 
 const checkAndAutoInitialize = () => {
-  const state = store.getState();
-  const user = state.auth?.user;
-  const token = state.auth?.token;
-  
-  // Check if user or token changed
-  if (user && token && (user !== currentUser || token !== currentToken)) {
-    currentUser = user;
-    currentToken = token;
-    
-    console.log('🚀 Auth state changed, auto-initializing socket...');
-    console.log('User:', user.name, 'Token exists:', !!token);
-    
-    // Auto-connect after a short delay
-    setTimeout(async () => {
-      try {
-        console.log('⚡ STARTING AUTO-CONNECTION...');
-        const success = await socketService.connect(token);
-        if (success) {
-          console.log('✅ AUTO-CONNECTION SUCCESSFUL!');
-        } else {
-          console.log('❌ AUTO-CONNECTION FAILED');
-        }
-      } catch (error) {
-        console.error('❌ Auto-connection error:', error);
-      }
-    }, 2000);
+  // Clear any existing timer
+  if (initializationTimer) {
+    clearTimeout(initializationTimer);
   }
+
+  // Delay initialization to avoid rapid calls
+  initializationTimer = setTimeout(async () => {
+    try {
+      const state = store.getState();
+      const user = state.auth?.user;
+      const token = state.auth?.token;
+      
+      // Check if we have valid auth data
+      if (!user || !token) {
+        console.log('⚠️ No auth data for socket auto-initialization');
+        currentUser = null;
+        currentToken = null;
+        return;
+      }
+
+      // Check if user or token changed
+      const userChanged = !currentUser || currentUser.id !== user.id;
+      const tokenChanged = currentToken !== token;
+
+      if (userChanged || tokenChanged) {
+        console.log('🔄 Auth state changed, starting auto-initialization...', {
+          userChanged,
+          tokenChanged,
+          userId: user.id,
+          userName: user.name
+        });
+        
+        // Update tracking variables
+        currentUser = user;
+        currentToken = token;
+        
+        // Trigger auto-connection
+        await socketService.autoConnect();
+      }
+    } catch (error) {
+      console.error('❌ Auto-initialization error:', error);
+    }
+  }, 1000); // 1 second delay to debounce rapid state changes
 };
 
 // Listen to store changes for auto-initialization
-console.log('🔧 Setting up store subscription for auto-initialization');
+console.log('🔧 Setting up store subscription for socket auto-initialization');
 store.subscribe(checkAndAutoInitialize);
 
-// Initial check
-setTimeout(checkAndAutoInitialize, 1000);
+// Initial check after a short delay
+setTimeout(() => {
+  console.log('🚀 Performing initial auto-initialization check...');
+  checkAndAutoInitialize();
+}, 2000);
 
 export default socketService;

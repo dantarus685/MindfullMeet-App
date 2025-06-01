@@ -1,4 +1,4 @@
-// socketHandlers/chatHandler.js - Improved version with better error handling
+// socketHandlers/chatHandler.js - Fixed version with message history loading
 const jwt = require('jsonwebtoken');
 const { SupportRoom, SupportMessage, User } = require('../models');
 const { Op } = require('sequelize');
@@ -87,6 +87,27 @@ const validateRoomAccess = async (userId, roomId) => {
   }
 };
 
+// Load recent messages for a room
+const loadRoomMessages = async (roomId, limit = 50) => {
+  try {
+    const messages = await SupportMessage.findAll({
+      where: { roomId },
+      include: [{
+        model: User,
+        as: 'sender',
+        attributes: ['id', 'name', 'profileImage', 'role']
+      }],
+      order: [['createdAt', 'DESC']],
+      limit
+    });
+
+    return messages.reverse(); // Return in chronological order (oldest first)
+  } catch (error) {
+    log('❌ Error loading room messages:', error.message);
+    return [];
+  }
+};
+
 // Main chat handler setup
 const setupChatHandlers = (io) => {
   // Apply authentication middleware
@@ -163,6 +184,10 @@ const setupChatHandlers = (io) => {
           }]
         });
 
+        // **FIXED: Load message history when joining room**
+        const messageHistory = await loadRoomMessages(roomId, 50);
+        log(`📚 Loaded ${messageHistory.length} messages for room ${roomId}`);
+
         // Join the Socket.IO room
         await socket.join(`room_${roomId}`);
         
@@ -180,6 +205,18 @@ const setupChatHandlers = (io) => {
         }
         roomMembers.get(roomKey).add(socket.userId);
 
+        // Mark messages as read for current user (when joining)
+        await SupportMessage.update(
+          { isRead: true },
+          {
+            where: {
+              roomId: parseInt(roomId),
+              senderId: { [Op.ne]: socket.userId },
+              isRead: false
+            }
+          }
+        );
+
         log(`✅ User ${socket.user.name} successfully joined room ${roomId}`);
         
         // Notify other room members
@@ -194,7 +231,7 @@ const setupChatHandlers = (io) => {
           timestamp: new Date().toISOString()
         });
 
-        // Confirm to user with full room data
+        // **FIXED: Send room data WITH message history**
         socket.emit('roomJoined', { 
           success: true,
           roomId: parseInt(roomId),
@@ -207,6 +244,7 @@ const setupChatHandlers = (io) => {
             updatedAt: fullRoom.updatedAt
           },
           participants: fullRoom.participants,
+          messages: messageHistory, // Include message history
           onlineUsers: getOnlineUsersInRoom(roomId),
           timestamp: new Date().toISOString()
         });
