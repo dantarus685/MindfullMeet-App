@@ -1,105 +1,231 @@
-require('dotenv').config();
+// app.js - Fixed Express app with Socket.IO setup
 const express = require('express');
-const app = express();
+const http = require('http');
+const socketIo = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const path = require('path');
 
-app.use(express.json());
-
-// Enhanced CORS configuration - ADD YOUR IP HERE
-app.use(cors({
-  origin: [
-    'http://localhost:8081',
-    'http://localhost:19006', // Expo web
-    'http://localhost:8080',  // Common webpack port
-    'http://192.168.1.146:8081', // 👈 ADD YOUR IP + EXPO PORT
-    'http://192.168.1.146:19006', // 👈 ADD YOUR IP + EXPO WEB PORT
-    'http://192.168.1.146:8080', // 👈 ADD YOUR IP + WEBPACK PORT
-    /^exp:\/\/.*/,            // Expo Go app
-    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IP for Expo (regex)
-    'exp://localhost:8081',   // Expo format
-    'exp://127.0.0.1:8081',   // Expo format
-    'exp://192.168.1.146:8081' // 👈 ADD YOUR IP + EXPO FORMAT
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
-
-// Custom request logger middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const timestamp = new Date().toISOString();
-  
-  console.log(`\x1b[36m→\x1b[0m [\x1b[34m${timestamp}\x1b[0m] \x1b[35m${req.method}\x1b[0m ${req.originalUrl}`);
-  
-  // Log query parameters if they exist
-  if (Object.keys(req.query).length > 0) {
-    console.log(`  Query Params: ${JSON.stringify(req.query)}`);
-  }
-  
-  // Log request body for POST/PUT/PATCH methods (if not multipart/form-data)
-  if (['POST', 'PUT', 'PATCH'].includes(req.method) && 
-      req.headers['content-type']?.includes('application/json') && 
-      Object.keys(req.body).length > 0) {
-    // Sanitize password fields for security
-    const sanitizedBody = { ...req.body };
-    if (sanitizedBody.password) sanitizedBody.password = '********';
-    if (sanitizedBody.passwordConfirm) sanitizedBody.passwordConfirm = '********';
-    console.log(`  Request Body: ${JSON.stringify(sanitizedBody)}`);
-  }
-  
-  // Capture the original end function
-  const originalEnd = res.end;
-  
-  // Override the end function to log response info
-  res.end = function(chunk, encoding) {
-    const duration = Date.now() - start;
-    const statusColor = res.statusCode >= 500 ? 31 // red
-      : res.statusCode >= 400 ? 33 // yellow
-      : res.statusCode >= 300 ? 36 // cyan
-      : res.statusCode >= 200 ? 32 // green
-      : 0; // no color
-    
-    console.log(`\x1b[36m←\x1b[0m [\x1b[34m${timestamp}\x1b[0m] \x1b[35m${req.method}\x1b[0m ${req.originalUrl} \x1b[${statusColor}m${res.statusCode}\x1b[0m \x1b[33m${duration}ms\x1b[0m`);
-    
-    // Call the original end function
-    return originalEnd.call(this, chunk, encoding);
-  };
-  
-  next();
-});
-
-// Simple home route
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'API is running',
-    timestamp: new Date().toISOString(),
-    cors: 'enabled',
-    socketio: 'ready'
-  });
-});
-
-// Import routes
+// Import route modules
 const authRoutes = require('./routes/authRoutes');
-const eventRoutes = require('./routes/eventRoutes');
 const userRoutes = require('./routes/userRoutes');
+const eventRoutes = require('./routes/eventRoutes');
 const trackingRoutes = require('./routes/trackingRoutes');
 const supportRoutes = require('./routes/supportRoutes');
 
-// Register routes
-app.use('/api/auth', authRoutes);
-app.use('/api/events', eventRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/tracking', trackingRoutes);
-app.use('/api/support', supportRoutes);
+// Import Socket.IO handlers
+const { setupChatHandlers } = require('./socketHandlers/chatHandler');
 
-// Enhanced error handler
+const app = express();
+const server = http.createServer(app);
+
+// Simplified CORS origins
+const allowedOrigins = [
+  'http://localhost:8081',
+  'http://localhost:19006',
+  'http://localhost:8080',
+  'http://127.0.0.1:8081',
+  'http://127.0.0.1:19006',
+  'http://127.0.0.1:8080',
+  'http://192.168.56.1:8081',
+  'http://192.168.56.146:8081',
+  'http://192.168.56.146:19006', 
+  'http://192.168.56.146:8080',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list or matches Expo pattern
+    if (allowedOrigins.includes(origin) || 
+        /^exp:\/\/.*/.test(origin) || 
+        /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin)) {
+      return callback(null, true);
+    }
+    
+    console.log('❌ CORS blocked origin:', origin);
+    callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+// Socket.IO configuration - Simplified
+const io = socketIo(server, {
+  cors: corsOptions,
+  allowEIO3: true,
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  maxHttpBufferSize: 1e6,
+  cookie: false,
+  serveClient: false
+});
+
+// Middleware setup - Order is important!
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}));
+
+// Apply CORS before other middleware
+app.use(cors(corsOptions));
+
+// Logging middleware
+app.use(morgan('combined'));
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static file serving
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath));
+console.log('📂 Static file serving enabled for /uploads');
+
+// Health check endpoint - Place this BEFORE other routes to avoid conflicts
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
+  
+  res.json({
+    status: 'healthy',
+    uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+    memory: {
+      used: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+      total: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`
+    },
+    connections: {
+      active: io.engine.clientsCount
+    },
+    database: 'connected',
+    cors: 'enabled',
+    timestamp: new Date().toISOString(),
+    network: {
+      listening: '0.0.0.0',
+      port: process.env.PORT || 5000
+    }
+  });
+});
+
+// Basic route for testing
+app.get('/', (req, res) => {
+  res.json({
+    message: 'MindfullMeet API Server',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: '/api/auth',
+      users: '/api/users',
+      events: '/api/events',
+      tracking: '/api/tracking',
+      support: '/api/support',
+      health: '/health'
+    }
+  });
+});
+
+// API Routes
+console.log('🔗 Registering routes...');
+
+app.use('/api/auth', authRoutes);
+console.log('✅ /api/auth routes registered');
+
+app.use('/api/users', userRoutes);
+console.log('✅ /api/users routes registered');
+
+app.use('/api/events', eventRoutes);
+console.log('✅ /api/events routes registered');
+
+app.use('/api/tracking', trackingRoutes);
+console.log('✅ /api/tracking routes registered');
+
+app.use('/api/support', supportRoutes);
+console.log('✅ /api/support routes registered');
+
+// Setup Socket.IO chat handlers
+console.log('📡 Setting up Socket.IO chat handlers...');
+setupChatHandlers(io);
+console.log('✅ Socket.IO chat handlers configured');
+
+// Socket.IO connection logging with better error handling
+io.on('connection', (socket) => {
+  console.log(`🔌 Socket connected: ${socket.id} (User: ${socket.user ? socket.user.name : 'Unknown'})`);
+  
+  socket.emit('connected', {
+    socketId: socket.id,
+    timestamp: new Date().toISOString(),
+    message: 'Connected to MindfullMeet server',
+    authenticated: socket.authenticated || false
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`❌ Socket disconnected: ${socket.id} - Reason: ${reason}`);
+  });
+
+  socket.on('error', (error) => {
+    console.error(`❌ Socket error: ${socket.id}`, error);
+    socket.emit('error', {
+      message: 'Socket error occurred',
+      code: 'SOCKET_ERROR',
+      timestamp: new Date().toISOString()
+    });
+  });
+});
+
+// Handle 404 errors for API routes only
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    error: 'API Route not found',
+    message: `Cannot ${req.method} ${req.originalUrl}`,
+    availableRoutes: [
+      '/api/auth',
+      '/api/users', 
+      '/api/events',
+      '/api/tracking',
+      '/api/support'
+    ]
+  });
+});
+
+// Global error handler
 app.use((err, req, res, next) => {
-  console.error('Server Error:', err);
-  res.status(500).json({ 
-    error: err.message,
+  console.error('❌ Global error handler:', err.message);
+  
+  // Handle CORS errors specifically
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      error: 'CORS error',
+      message: 'Origin not allowed',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  if (process.env.NODE_ENV === 'development') {
+    console.error(err.stack);
+  }
+  
+  res.status(err.status || 500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong!',
     timestamp: new Date().toISOString()
   });
 });
 
-module.exports = app;
+// Export both app and server
+module.exports = { app, server, io };

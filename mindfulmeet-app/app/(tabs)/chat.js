@@ -1,4 +1,4 @@
-// app/(tabs)/chat.js - Enhanced main chat screen with ESLint fixes
+// app/(tabs)/chat.js - Simplified version that works with auto-connection
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { 
   View, 
@@ -11,8 +11,6 @@ import {
   RefreshControl,
   Alert,
   ActivityIndicator,
-  Animated,
-  AppState
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useDispatch, useSelector } from 'react-redux';
@@ -28,38 +26,172 @@ import {
   selectChatErrors,
   selectIsConnected,
   setCurrentUserId,
-  clearAllErrors,
-  selectLastActivity
+  clearAllErrors
 } from '../../src/redux/chatSlice';
 import socketService from '../../src/services/socketService';
-import { store } from '../../src/redux/store';
 
-const ConnectionStatusBanner = React.memo(function ConnectionStatusBanner({ isConnected, onReconnect }) {
-  const { colors, spacing } = useTheme();
-  const slideAnim = useRef(new Animated.Value(-50)).current;
+// Debug panel
+const DebugPanel = React.memo(function DebugPanel() {
   const [visible, setVisible] = useState(false);
-
+  const [info, setInfo] = useState({});
+  const isConnected = useSelector(state => state.chat.isConnected);
+  
   useEffect(() => {
-    if (!isConnected) {
-      setVisible(true);
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
-    } else if (visible) {
-      Animated.timing(slideAnim, {
-        toValue: -50,
-        duration: 300,
-        useNativeDriver: true,
-      }).start(() => setVisible(false));
+    if (visible) {
+      const updateInfo = () => {
+        const debugInfo = socketService.getDebugInfo();
+        setInfo(debugInfo);
+      };
+      
+      updateInfo();
+      const interval = setInterval(updateInfo, 2000);
+      return () => clearInterval(interval);
     }
-  }, [isConnected, slideAnim, visible]);
+  }, [visible]);
 
-  if (!visible && isConnected) return null;
+  if (!__DEV__) return null;
 
-  const styles = StyleSheet.create({
-    banner: {
+  const testConnection = async () => {
+    try {
+      const response = await fetch('http://192.168.56.1:5000/health');
+      const data = await response.json();
+      Alert.alert('Server Test', `✅ Server reachable!\nStatus: ${data.status}\nConnections: ${data.connections?.active || 0}`);
+    } catch (error) {
+      Alert.alert('Server Test', `❌ Server unreachable: ${error.message}`);
+    }
+  };
+
+  const manualConnect = async () => {
+    try {
+      const state = socketService.store?.getState() || {};
+      const token = state.auth?.token;
+      if (token) {
+        const success = await socketService.connect(token);
+        Alert.alert('Manual Connect', success ? '✅ Connected!' : '❌ Connection failed');
+      } else {
+        Alert.alert('Manual Connect', '❌ No token available');
+      }
+    } catch (error) {
+      Alert.alert('Manual Connect', `❌ Error: ${error.message}`);
+    }
+  };
+
+  return (
+    <>
+      <TouchableOpacity 
+        style={{
+          position: 'absolute',
+          top: 50,
+          right: 10,
+          backgroundColor: isConnected ? 'green' : 'red',
+          padding: 8,
+          borderRadius: 15,
+          zIndex: 1000,
+        }}
+        onPress={() => setVisible(!visible)}
+      >
+        <Text style={{ color: 'white', fontSize: 10 }}>
+          {visible ? '✕' : isConnected ? '🟢' : '🔴'}
+        </Text>
+      </TouchableOpacity>
+
+      {visible && (
+        <View style={{
+          position: 'absolute',
+          top: 90,
+          right: 10,
+          width: 300,
+          backgroundColor: 'rgba(0,0,0,0.95)',
+          padding: 12,
+          borderRadius: 8,
+          zIndex: 999,
+        }}>
+          <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', marginBottom: 8 }}>
+            Socket Debug Panel
+          </Text>
+          
+          <Text style={{ color: 'yellow', fontSize: 11, marginBottom: 2 }}>
+            Status: <Text style={{ color: isConnected ? 'green' : 'red' }}>
+              {isConnected ? '✅ Connected' : '❌ Disconnected'}
+            </Text>
+          </Text>
+          
+          <Text style={{ color: 'yellow', fontSize: 11, marginBottom: 2 }}>
+            Socket ID: <Text style={{ color: 'white' }}>{info.socketId || 'None'}</Text>
+          </Text>
+          
+          <Text style={{ color: 'yellow', fontSize: 11, marginBottom: 2 }}>
+            Auto-Init: <Text style={{ color: 'white' }}>Enabled</Text>
+          </Text>
+          
+          <Text style={{ color: 'yellow', fontSize: 11, marginBottom: 2 }}>
+            Rooms: <Text style={{ color: 'white' }}>{info.currentRooms?.length || 0}</Text>
+          </Text>
+
+          <Text style={{ color: 'yellow', fontSize: 11, marginBottom: 8 }}>
+            Pending: <Text style={{ color: 'white' }}>{info.pendingMessages || 0}</Text>
+          </Text>
+          
+          <View style={{ 
+            flexDirection: 'row', 
+            justifyContent: 'space-between',
+            marginBottom: 8 
+          }}>
+            <TouchableOpacity 
+              style={{ 
+                backgroundColor: '#007bff', 
+                padding: 6, 
+                borderRadius: 4, 
+                width: '48%'
+              }}
+              onPress={testConnection}
+            >
+              <Text style={{ color: 'white', fontSize: 10, textAlign: 'center', fontWeight: 'bold' }}>
+                Test Server
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={{ 
+                backgroundColor: '#28a745', 
+                padding: 6, 
+                borderRadius: 4, 
+                width: '48%'
+              }}
+              onPress={manualConnect}
+            >
+              <Text style={{ color: 'white', fontSize: 10, textAlign: 'center', fontWeight: 'bold' }}>
+                Manual Connect
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity 
+            style={{ 
+              backgroundColor: '#dc3545', 
+              padding: 6, 
+              borderRadius: 4
+            }}
+            onPress={() => setVisible(false)}
+          >
+            <Text style={{ color: 'white', fontSize: 10, textAlign: 'center', fontWeight: 'bold' }}>
+              Close
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </>
+  );
+});
+
+// Connection banner
+const ConnectionBanner = React.memo(function ConnectionBanner({ isConnected, onReconnect }) {
+  const { colors, spacing } = useTheme();
+  
+  if (isConnected) return null;
+
+  return (
+    <View style={{
       backgroundColor: '#FFF3CD',
       borderBottomWidth: 1,
       borderBottomColor: '#FFEAA7',
@@ -67,50 +199,76 @@ const ConnectionStatusBanner = React.memo(function ConnectionStatusBanner({ isCo
       paddingHorizontal: spacing.md,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    content: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      flex: 1,
-    },
-    text: {
-      color: '#856404',
-      fontSize: 14,
-      marginLeft: spacing.sm,
-      flex: 1,
-    },
-    reconnectButton: {
-      backgroundColor: '#856404',
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
-      borderRadius: 4,
-    },
-    reconnectText: {
-      color: 'white',
-      fontSize: 12,
-      fontWeight: 'bold',
-    }
-  });
-
-  return (
-    <Animated.View style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}>
-      <View style={styles.content}>
-        <Ionicons name="warning" size={16} color="#856404" />
-        <Text style={styles.text}>
-          Connection lost. Some features may not work properly.
-        </Text>
-      </View>
-      <TouchableOpacity style={styles.reconnectButton} onPress={onReconnect}>
-        <Text style={styles.reconnectText}>Reconnect</Text>
+    }}>
+      <Ionicons name="warning" size={16} color="#856404" />
+      <Text style={{ color: '#856404', fontSize: 14, marginLeft: spacing.sm, flex: 1 }}>
+        Connection lost. Some features may not work.
+      </Text>
+      <TouchableOpacity 
+        style={{ backgroundColor: '#856404', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 4 }}
+        onPress={onReconnect}
+      >
+        <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>Reconnect</Text>
       </TouchableOpacity>
-    </Animated.View>
+    </View>
   );
 });
 
+// Chat item component (same implementation as before)
 const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) {
   const { colors, spacing } = useTheme();
   
+  const getDisplayInfo = () => {
+    if (chat.type === 'group') {
+      return {
+        name: chat.name,
+        avatar: null,
+        isOnline: false
+      };
+    } else {
+      const otherParticipant = chat.otherParticipants?.[0];
+      return {
+        name: otherParticipant?.name || chat.name,
+        avatar: otherParticipant?.profileImage ? { uri: otherParticipant.profileImage } : null,
+        isOnline: chat.isOnline || false
+      };
+    }
+  };
+
+  const getLastMessage = () => {
+    const lastMessage = chat.messages?.[0];
+    if (!lastMessage) return 'No messages yet';
+    
+    let prefix = '';
+    if (lastMessage.senderId === currentUserId) {
+      prefix = 'You: ';
+    } else if (chat.type === 'group' && lastMessage.sender) {
+      prefix = `${lastMessage.sender.name}: `;
+    }
+    
+    return `${prefix}${lastMessage.content}`;
+  };
+
+  const formatTime = (dateString) => {
+    if (!dateString) return '';
+    
+    const messageDate = new Date(dateString);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now - messageDate) / (1000 * 60));
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    const diffInDays = Math.floor(diffInHours / 24);
+    
+    if (diffInMinutes < 1) return 'now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m`;
+    if (diffInHours < 24) return `${diffInHours}h`;
+    if (diffInDays === 1) return 'Yesterday';
+    if (diffInDays < 7) return messageDate.toLocaleDateString([], { weekday: 'short' });
+    return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  const displayInfo = getDisplayInfo();
+  const hasUnread = (chat.unreadCount || 0) > 0;
+
   const styles = StyleSheet.create({
     container: {
       flexDirection: 'row',
@@ -141,7 +299,7 @@ const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) 
     },
     name: {
       fontSize: 16,
-      fontWeight: 'bold',
+      fontWeight: hasUnread ? 'bold' : '600',
       color: colors.text,
       flex: 1,
     },
@@ -152,22 +310,15 @@ const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) 
     messageContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      position: 'relative',
     },
     message: {
       fontSize: 14,
-      color: colors.textSecondary,
-      marginRight: 35,
+      color: hasUnread ? colors.text : colors.textSecondary,
+      fontWeight: hasUnread ? '600' : 'normal',
       flex: 1,
-    },
-    unreadMessage: {
-      fontWeight: '600',
-      color: colors.text,
+      marginRight: 8,
     },
     unreadBadge: {
-      position: 'absolute',
-      right: 0,
-      top: '50%',
       backgroundColor: colors.primary,
       borderRadius: 12,
       minWidth: 24,
@@ -175,15 +326,11 @@ const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) 
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 8,
-      transform: [{ translateY: -12 }],
     },
     unreadText: {
       color: colors.white,
       fontSize: 12,
       fontWeight: 'bold',
-    },
-    groupIcon: {
-      marginLeft: 4,
     },
     onlineIndicator: {
       position: 'absolute',
@@ -196,70 +343,7 @@ const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) 
       borderWidth: 2,
       borderColor: colors.background,
     },
-    offlineIndicator: {
-      backgroundColor: colors.textSecondary,
-    }
   });
-
-  const formatTime = (dateString) => {
-    if (!dateString) return '';
-    
-    const messageDate = new Date(dateString);
-    const now = new Date();
-    const diffInMs = now - messageDate;
-    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
-    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-    
-    if (diffInMinutes < 1) {
-      return 'now';
-    } else if (diffInMinutes < 60) {
-      return `${diffInMinutes}m`;
-    } else if (diffInHours < 24) {
-      return `${diffInHours}h`;
-    } else if (diffInDays === 1) {
-      return 'Yesterday';
-    } else if (diffInDays < 7) {
-      return messageDate.toLocaleDateString([], { weekday: 'short' });
-    } else {
-      return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-  };
-
-  const getDisplayInfo = () => {
-    if (chat.type === 'group') {
-      return {
-        name: chat.name,
-        avatar: null,
-        isOnline: false
-      };
-    } else {
-      const otherParticipant = chat.otherParticipants?.[0];
-      return {
-        name: otherParticipant?.name || chat.name,
-        avatar: otherParticipant?.profileImage ? { uri: otherParticipant.profileImage } : null,
-        isOnline: chat.isOnline || false
-      };
-    }
-  };
-
-  const getLastMessage = () => {
-    const lastMessage = chat.messages?.[0];
-    if (!lastMessage) return 'No messages yet';
-    
-    let prefix = '';
-    if (chat.type === 'group' && lastMessage.sender) {
-      const senderName = lastMessage.senderId === currentUserId ? 'You' : lastMessage.sender.name;
-      prefix = `${senderName}: `;
-    } else if (lastMessage.senderId === currentUserId) {
-      prefix = 'You: ';
-    }
-    
-    return `${prefix}${lastMessage.content}`;
-  };
-
-  const displayInfo = getDisplayInfo();
-  const hasUnread = (chat.unreadCount || 0) > 0;
 
   return (
     <TouchableOpacity 
@@ -280,39 +364,23 @@ const ChatItem = React.memo(function ChatItem({ chat, onPress, currentUserId }) 
           </View>
         )}
         
-        {chat.type === 'one-on-one' && (
-          <View style={[
-            styles.onlineIndicator,
-            !displayInfo.isOnline && styles.offlineIndicator
-          ]} />
+        {chat.type === 'one-on-one' && displayInfo.isOnline && (
+          <View style={styles.onlineIndicator} />
         )}
       </View>
       
       <View style={styles.content}>
         <View style={styles.nameRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-            <Text style={[styles.name, hasUnread && { fontWeight: 'bold' }]} numberOfLines={1}>
-              {displayInfo.name}
-            </Text>
-            {chat.type === 'group' && (
-              <Ionicons 
-                name="people" 
-                size={14} 
-                color={colors.primary} 
-                style={styles.groupIcon}
-              />
-            )}
-          </View>
+          <Text style={styles.name} numberOfLines={1}>
+            {displayInfo.name}
+          </Text>
           <Text style={styles.time}>
             {formatTime(chat.messages?.[0]?.createdAt || chat.updatedAt)}
           </Text>
         </View>
         
         <View style={styles.messageContainer}>
-          <Text 
-            style={[styles.message, hasUnread && styles.unreadMessage]} 
-            numberOfLines={2}
-          >
+          <Text style={styles.message} numberOfLines={2}>
             {getLastMessage()}
           </Text>
           {hasUnread && (
@@ -340,15 +408,10 @@ export default function ChatScreen() {
   const errors = useSelector(selectChatErrors);
   const isConnected = useSelector(selectIsConnected);
   const currentUser = useSelector(state => state.auth.user);
-  const lastActivity = useSelector(selectLastActivity);
+  const token = useSelector(state => state.auth.token);
   
   // Local state
   const [refreshing, setRefreshing] = useState(false);
-  const [showConnectionStatus, setShowConnectionStatus] = useState(false);
-  const [retryAttempts, setRetryAttempts] = useState(0);
-  
-  // Refs
-  const appStateRef = useRef(AppState.currentState);
 
   const styles = StyleSheet.create({
     container: {
@@ -452,157 +515,67 @@ export default function ChatScreen() {
       paddingHorizontal: spacing.lg,
       paddingVertical: spacing.sm,
       borderRadius: 8,
+      marginHorizontal: spacing.xs,
     },
     retryButtonText: {
       color: colors.white,
       fontWeight: 'bold',
     },
-    debugInfo: {
-      position: 'absolute',
-      bottom: 20,
-      right: 20,
-      backgroundColor: 'rgba(0,0,0,0.8)',
-      padding: 8,
-      borderRadius: 4,
-    },
-    debugText: {
-      color: 'white',
-      fontSize: 10,
+    buttonRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
     }
   });
 
-  // Load rooms function
+  // Load rooms
   const loadRooms = useCallback(async () => {
     try {
-      console.log('🔄 Loading user rooms...');
+      console.log('📥 Loading user rooms...');
       await dispatch(fetchUserRooms()).unwrap();
-      setRetryAttempts(0);
+      console.log('✅ Rooms loaded successfully');
     } catch (error) {
-      console.error('Failed to load rooms:', error);
-      setRetryAttempts(prev => prev + 1);
-      
-      if (retryAttempts < 3) {
-        Alert.alert(
-          'Connection Error',
-          'Failed to load your conversations. Please check your internet connection.',
-          [
-            { text: 'Retry', onPress: loadRooms },
-            { text: 'Cancel', style: 'cancel' }
-          ]
-        );
-      }
+      console.error('❌ Failed to load rooms:', error);
+      Alert.alert('Error', 'Failed to load conversations. Please check your connection and try again.');
     }
-  }, [dispatch, retryAttempts]);
+  }, [dispatch]);
 
-  // Setup socket connection
-  const setupSocket = useCallback(async () => {
-    if (!currentUser) return;
-
-    try {
-      const state = store.getState();
-      const token = state.auth?.token;
-      
-      console.log('🔌 Setting up socket connection...');
-      
-      if (token) {
-        const success = await socketService.connect(token);
-        console.log('🔌 Socket connection result:', success);
-        
-        if (success) {
-          setTimeout(() => {
-            const status = socketService.getConnectionStatus();
-            console.log('🔍 Socket status after connect:', status);
-          }, 2000);
-        }
-      } else {
-        console.error('❌ No token available for socket connection');
-      }
-    } catch (error) {
-      console.error('❌ Error setting up socket:', error);
-    }
-  }, [currentUser]);
-
-  // Handle app state changes
+  // SIMPLIFIED: Just set user ID and let socketService handle auto-connection
   useEffect(() => {
-    const handleAppStateChange = (nextAppState) => {
-      console.log('📱 App state changed:', appStateRef.current, '->', nextAppState);
-      
-      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        // App came to foreground
-        console.log('📱 App became active, refreshing data...');
-        if (currentUser) {
-          loadRooms();
-          setupSocket();
-        }
-      } else if (nextAppState.match(/inactive|background/)) {
-        // App went to background
-        console.log('📱 App went to background');
-      }
-      
-      appStateRef.current = nextAppState;
-    };
-
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription?.remove();
-  }, [currentUser, loadRooms, setupSocket]);
-
-  // Initial setup
-  useEffect(() => {
-    if (currentUser) {
-      console.log('🔄 Setting up chat for user:', currentUser.id);
-      
+    if (currentUser && token) {
+      console.log('🔄 Setting current user ID for auto-connection');
       dispatch(setCurrentUserId(currentUser.id));
-      dispatch(clearAllErrors());
       
-      setupSocket();
+      // Clear errors and load rooms
+      dispatch(clearAllErrors());
       loadRooms();
     }
+  }, [currentUser, token, dispatch, loadRooms]);
 
-    return () => {
-      console.log('🧹 Cleaning up chat screen...');
-    };
-  }, [currentUser, dispatch, setupSocket, loadRooms]);
-
-  // Connection status monitoring
-  useEffect(() => {
-    setShowConnectionStatus(true);
-    const timer = setTimeout(() => setShowConnectionStatus(false), 3000);
-    
-    return () => clearTimeout(timer);
-  }, [isConnected]);
-
-  // Screen focus handler
+  // Screen focus effect
   useFocusEffect(
     useCallback(() => {
       console.log('📱 Chat screen focused');
       
       if (currentUser && !loading.rooms) {
-        // Refresh data when screen becomes active
         loadRooms();
       }
-      
-      return () => {
-        console.log('📱 Chat screen unfocused');
-      };
     }, [currentUser, loading.rooms, loadRooms])
   );
 
   // Handlers
   const handleRefresh = useCallback(async () => {
+    console.log('🔄 Manual refresh');
     setRefreshing(true);
     try {
       await loadRooms();
-      
-      // Also try to reconnect socket if needed
-      if (!isConnected) {
-        setupSocket();
-      }
     } finally {
       setRefreshing(false);
     }
-  }, [loadRooms, isConnected, setupSocket]);
+  }, [loadRooms]);
 
   const handleChatPress = useCallback((chat) => {
+    console.log('💬 Opening chat:', chat.id, chat.name);
     router.push({
       pathname: '/chat/[id]',
       params: { 
@@ -614,18 +587,43 @@ export default function ChatScreen() {
   }, [router]);
 
   const handleNewChat = useCallback(() => {
+    console.log('➕ Opening new chat screen');
     router.push('/chat/new');
   }, [router]);
 
-  const handleReconnect = useCallback(() => {
-    console.log('🔄 Manual reconnect triggered');
-    setupSocket();
-  }, [setupSocket]);
+  const handleReconnect = useCallback(async () => {
+    console.log('🔄 Manual reconnect');
+    try {
+      const success = await socketService.forceReconnect();
+      if (!success) {
+        Alert.alert('Reconnect Failed', 'Unable to reconnect. Please check your connection.');
+      }
+    } catch (error) {
+      Alert.alert('Reconnect Error', error.message);
+    }
+  }, []);
 
   const handleRetry = useCallback(() => {
+    console.log('🔄 Retry loading');
     dispatch(clearAllErrors());
     loadRooms();
   }, [dispatch, loadRooms]);
+
+  const testServerConnection = useCallback(async () => {
+    try {
+      const response = await fetch('http://192.168.56.1:5000/health');
+      const data = await response.json();
+      Alert.alert(
+        'Server Test Result', 
+        `✅ Server is reachable!\n\nStatus: ${data.status}\nConnections: ${data.connections?.active || 0}\nUptime: ${data.uptime || 'unknown'}`
+      );
+    } catch (error) {
+      Alert.alert(
+        'Server Test Result', 
+        `❌ Cannot reach server\n\nError: ${error.message}\n\nCheck if:\n- Server is running on 192.168.56.1:5000\n- Your device is on the same network\n- No firewall blocking the connection`
+      );
+    }
+  }, []);
 
   // Render functions
   const renderChatItem = useCallback(({ item }) => (
@@ -636,49 +634,51 @@ export default function ChatScreen() {
     />
   ), [handleChatPress, currentUser]);
 
-  const renderEmptyState = useCallback(() => (
+  const renderEmpty = useCallback(() => (
     <View style={styles.emptyContainer}>
       <Ionicons name="chatbubbles-outline" size={70} color={colors.primary} />
       <Text style={styles.emptyText}>
-        You don&apos;t have any conversations yet.{'\n\n'}
-        Start a new chat to connect with support groups and wellness coaches.
+        You don not have any conversations yet.{'\n\n'}
+        Start a new chat to connect with others.
       </Text>
+      {__DEV__ && (
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={styles.retryButton} onPress={testServerConnection}>
+            <Text style={styles.retryButtonText}>Test Server</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.retryButton} onPress={handleReconnect}>
+            <Text style={styles.retryButtonText}>Connect Socket</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
-  ), [styles, colors]);
+  ), [styles, colors, testServerConnection, handleReconnect]);
 
   const renderError = useCallback(() => (
     <View style={styles.errorContainer}>
       <Ionicons name="alert-circle-outline" size={48} color={colors.error || '#F44336'} />
       <Text style={styles.errorText}>
-        {errors.rooms || 'Something went wrong. Please try again.'}
+        {errors.rooms || 'Failed to load conversations'}
       </Text>
-      <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
-        <Text style={styles.retryButtonText}>Retry</Text>
-      </TouchableOpacity>
+      <View style={styles.buttonRow}>
+        <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+        {__DEV__ && (
+          <TouchableOpacity style={styles.retryButton} onPress={testServerConnection}>
+            <Text style={styles.retryButtonText}>Test Server</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
-  ), [styles, colors, errors.rooms, handleRetry]);
-
-  const getConnectionIndicator = () => {
-    if (isConnected) {
-      return (
-        <View style={[styles.connectionStatus, { backgroundColor: '#4CAF50' }]}>
-          <Ionicons name="checkmark" size={10} color="white" />
-        </View>
-      );
-    } else {
-      return (
-        <View style={[styles.connectionStatus, { backgroundColor: '#F44336' }]}>
-          <Ionicons name="close" size={10} color="white" />
-        </View>
-      );
-    }
-  };
+  ), [styles, colors, errors.rooms, handleRetry, testServerConnection]);
 
   // Loading state
   if (loading.rooms && rooms.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
+        <DebugPanel />
         <View style={styles.header}>
           <View style={styles.titleContainer}>
             <Text style={styles.title}>Messages</Text>
@@ -687,7 +687,7 @@ export default function ChatScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.emptyText, { marginTop: spacing.md }]}>
-            Loading your conversations...
+            Loading conversations...
           </Text>
         </View>
       </SafeAreaView>
@@ -698,11 +698,11 @@ export default function ChatScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       
-      {/* Connection status banner */}
-      <ConnectionStatusBanner 
-        isConnected={isConnected} 
-        onReconnect={handleReconnect}
-      />
+      {/* Debug Panel */}
+      <DebugPanel />
+      
+      {/* Connection Banner */}
+      <ConnectionBanner isConnected={isConnected} onReconnect={handleReconnect} />
       
       {/* Header */}
       <View style={styles.header}>
@@ -718,7 +718,17 @@ export default function ChatScreen() {
         </View>
         
         <View style={styles.headerButtons}>
-          {showConnectionStatus && getConnectionIndicator()}
+          <View style={[
+            styles.connectionStatus, 
+            { backgroundColor: isConnected ? '#4CAF50' : '#F44336' }
+          ]}>
+            <Ionicons 
+              name={isConnected ? 'checkmark' : 'close'} 
+              size={10} 
+              color="white" 
+            />
+          </View>
+          
           <TouchableOpacity 
             style={styles.newChatButton} 
             onPress={handleNewChat}
@@ -746,34 +756,13 @@ export default function ChatScreen() {
               tintColor={colors.primary}
             />
           }
-          ItemSeparatorComponent={() => (
-            <View style={{ height: 1, backgroundColor: colors.lightGrey, marginLeft: 87 }} />
-          )}
           removeClippedSubviews={true}
-          maxToRenderPerBatch={15}
-          windowSize={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           initialNumToRender={10}
         />
       ) : (
-        renderEmptyState()
-      )}
-      
-      {/* Debug info (development only) */}
-      {__DEV__ && (
-        <View style={styles.debugInfo}>
-          <Text style={styles.debugText}>
-            Connected: {isConnected ? 'Yes' : 'No'}
-          </Text>
-          <Text style={styles.debugText}>
-            Rooms: {rooms.length}
-          </Text>
-          <Text style={styles.debugText}>
-            Unread: {totalUnreadCount}
-          </Text>
-          <Text style={styles.debugText}>
-            Last Activity: {lastActivity ? new Date(lastActivity).toLocaleTimeString() : 'None'}
-          </Text>
-        </View>
+        renderEmpty()
       )}
     </SafeAreaView>
   );

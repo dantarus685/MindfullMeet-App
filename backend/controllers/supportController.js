@@ -1,4 +1,4 @@
-// controllers/supportController.js
+// controllers/supportController.js - FIXED VERSION (Sequelize Only)
 const { SupportRoom, SupportMessage, User, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
@@ -7,6 +7,8 @@ exports.createSupportRoom = async (req, res) => {
   try {
     const { name, type = 'one-on-one', participantIds = [] } = req.body;
     const currentUserId = req.user.id;
+
+    console.log('🔄 Creating room:', { name, type, participantIds, currentUserId });
 
     // Validate input
     if (!name || name.trim().length === 0) {
@@ -24,27 +26,51 @@ exports.createSupportRoom = async (req, res) => {
       });
     }
 
-    // Check if one-on-one room already exists between these users (simplified approach)
+    // FIXED: Check if one-on-one room already exists using Sequelize
     if (type === 'one-on-one') {
-      // Get all one-on-one rooms for current user
-      const existingRooms = await SupportRoom.findAll({
-        where: { type: 'one-on-one' },
+      const otherUserId = participantIds[0];
+      
+      console.log('🔍 Checking for existing room between users:', currentUserId, 'and', otherUserId);
+      
+      // Get all one-on-one rooms that include the current user
+      const userRooms = await SupportRoom.findAll({
+        where: { 
+          type: 'one-on-one',
+          active: true 
+        },
         include: [{
           model: User,
           as: 'participants',
           attributes: ['id'],
+          where: { id: currentUserId },
           through: { attributes: [] }
         }]
       });
 
-      // Check if any room has exactly these two participants
-      for (const room of existingRooms) {
-        const participantIds_in_room = room.participants.map(p => p.id);
+      console.log('🔍 Found', userRooms.length, 'existing one-on-one rooms for current user');
+
+      // Check each room to see if it contains exactly the two users we want
+      for (const room of userRooms) {
+        // Get all participants for this room
+        const roomWithParticipants = await SupportRoom.findByPk(room.id, {
+          include: [{
+            model: User,
+            as: 'participants',
+            attributes: ['id'],
+            through: { attributes: [] }
+          }]
+        });
+
+        const participantIds_in_room = roomWithParticipants.participants.map(p => p.id);
+        
+        // Check if this room has exactly these two users
         if (participantIds_in_room.length === 2 && 
             participantIds_in_room.includes(currentUserId) && 
-            participantIds_in_room.includes(participantIds[0])) {
+            participantIds_in_room.includes(otherUserId)) {
           
-          // Fetch complete room data
+          console.log('✅ Found existing room:', room.id);
+          
+          // Fetch complete room data with all participant details
           const completeRoom = await SupportRoom.findByPk(room.id, {
             include: [{
               model: User,
@@ -53,14 +79,22 @@ exports.createSupportRoom = async (req, res) => {
             }]
           });
 
+          // Add otherParticipants field
+          const roomData = completeRoom.toJSON();
+          roomData.otherParticipants = roomData.participants.filter(p => p.id !== currentUserId);
+
           return res.status(200).json({
             status: 'success',
             message: 'Room already exists',
-            data: { room: completeRoom }
+            data: { room: roomData }
           });
         }
       }
+
+      console.log('🔍 No existing room found between these users');
     }
+
+    console.log('🆕 Creating new room...');
 
     // Create new room
     const room = await SupportRoom.create({
@@ -70,9 +104,13 @@ exports.createSupportRoom = async (req, res) => {
 
     // Add participants to room
     const allParticipantIds = [currentUserId, ...participantIds];
+    console.log('👥 Adding participants:', allParticipantIds);
+    
     const participants = await User.findAll({
       where: { id: { [Op.in]: allParticipantIds } }
     });
+
+    console.log('👥 Found', participants.length, 'users to add as participants');
 
     await room.addParticipants(participants);
 
@@ -85,13 +123,19 @@ exports.createSupportRoom = async (req, res) => {
       }]
     });
 
+    // Add otherParticipants field
+    const roomData = completeRoom.toJSON();
+    roomData.otherParticipants = roomData.participants.filter(p => p.id !== currentUserId);
+
+    console.log('✅ Room created successfully:', room.id, 'with', roomData.participants.length, 'participants');
+
     res.status(201).json({
       status: 'success',
       message: 'Support room created successfully',
-      data: { room: completeRoom }
+      data: { room: roomData }
     });
   } catch (err) {
-    console.error('Create support room error:', err);
+    console.error('❌ Create support room error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to create support room'
@@ -106,7 +150,9 @@ exports.getUserRooms = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    // First get the rooms with participants
+    console.log('📥 Fetching rooms for user:', userId);
+
+    // Get rooms where user is a participant
     const rooms = await SupportRoom.findAndCountAll({
       where: { active: true },
       include: [
@@ -129,6 +175,8 @@ exports.getUserRooms = async (req, res) => {
       offset: parseInt(offset),
       distinct: true
     });
+
+    console.log('📋 Found', rooms.count, 'rooms for user');
 
     // Calculate unread message count and get latest message for each room
     const roomsWithUnread = await Promise.all(
@@ -160,6 +208,8 @@ exports.getUserRooms = async (req, res) => {
         // Get the other participants (exclude current user)
         roomData.otherParticipants = roomData.participants.filter(p => p.id !== userId);
         
+        console.log('📊 Room', room.id, '- Unread:', unreadCount, 'Participants:', roomData.participants.length);
+        
         return roomData;
       })
     );
@@ -178,7 +228,7 @@ exports.getUserRooms = async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('Get user rooms error:', err);
+    console.error('❌ Get user rooms error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch user rooms'
@@ -194,6 +244,8 @@ exports.getRoomMessages = async (req, res) => {
     const { page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
 
+    console.log('📨 Fetching messages for room:', roomId, 'user:', userId);
+
     // Verify user is participant in this room
     const room = await SupportRoom.findByPk(roomId, {
       include: [{
@@ -206,6 +258,7 @@ exports.getRoomMessages = async (req, res) => {
     });
 
     if (!room) {
+      console.log('❌ Room not found or user not participant');
       return res.status(404).json({
         status: 'error',
         message: 'Room not found or you are not a participant'
@@ -225,8 +278,10 @@ exports.getRoomMessages = async (req, res) => {
       offset: parseInt(offset)
     });
 
+    console.log('📝 Found', messages.count, 'messages in room');
+
     // Mark messages as read for current user
-    await SupportMessage.update(
+    const readUpdate = await SupportMessage.update(
       { isRead: true },
       {
         where: {
@@ -236,6 +291,8 @@ exports.getRoomMessages = async (req, res) => {
         }
       }
     );
+
+    console.log('👁️ Marked', readUpdate[0], 'messages as read');
 
     res.status(200).json({
       status: 'success',
@@ -251,7 +308,7 @@ exports.getRoomMessages = async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('Get room messages error:', err);
+    console.error('❌ Get room messages error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch room messages'
@@ -265,6 +322,8 @@ exports.sendMessage = async (req, res) => {
     const { id: roomId } = req.params;
     const { content } = req.body;
     const senderId = req.user.id;
+
+    console.log('📤 Sending message to room:', roomId, 'from user:', senderId);
 
     // Validate input
     if (!content || content.trim().length === 0) {
@@ -286,6 +345,7 @@ exports.sendMessage = async (req, res) => {
     });
 
     if (!room) {
+      console.log('❌ Room not found or user not participant');
       return res.status(404).json({
         status: 'error',
         message: 'Room not found or you are not a participant'
@@ -312,13 +372,15 @@ exports.sendMessage = async (req, res) => {
     // Update room's updated timestamp
     await room.update({ updatedAt: new Date() });
 
+    console.log('✅ Message created:', message.id);
+
     res.status(201).json({
       status: 'success',
       message: 'Message sent successfully',
       data: { message: completeMessage }
     });
   } catch (err) {
-    console.error('Send message error:', err);
+    console.error('❌ Send message error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to send message'
@@ -332,6 +394,8 @@ exports.joinRoom = async (req, res) => {
     const { id: roomId } = req.params;
     const userId = req.user.id;
 
+    console.log('🚪 User', userId, 'attempting to join room:', roomId);
+
     // Verify user is participant in this room
     const room = await SupportRoom.findByPk(roomId, {
       include: [{
@@ -343,6 +407,7 @@ exports.joinRoom = async (req, res) => {
     });
 
     if (!room) {
+      console.log('❌ Room not found');
       return res.status(404).json({
         status: 'error',
         message: 'Room not found'
@@ -351,18 +416,25 @@ exports.joinRoom = async (req, res) => {
 
     const isParticipant = room.participants.some(p => p.id === userId);
     if (!isParticipant) {
+      console.log('❌ User not a participant');
       return res.status(403).json({
         status: 'error',
         message: 'You are not a participant in this room'
       });
     }
 
+    // Add otherParticipants field
+    const roomData = room.toJSON();
+    roomData.otherParticipants = roomData.participants.filter(p => p.id !== userId);
+
+    console.log('✅ User successfully joined room');
+
     res.status(200).json({
       status: 'success',
-      data: { room }
+      data: { room: roomData }
     });
   } catch (err) {
-    console.error('Join room error:', err);
+    console.error('❌ Join room error:', err);
     res.status(500).json({
       status: 'error',
       message: 'Failed to join room'

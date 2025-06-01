@@ -24,6 +24,7 @@ interface RootState {
   events: any;
   rsvp: any;
   chat: any;
+  profile: any; // Added profile to existing state
 }
 
 // Auth initializer component with proper typing
@@ -85,6 +86,7 @@ function StackLayout() {
             <Stack.Screen name="auth/signup" />
             <Stack.Screen name="events" />
             <Stack.Screen name="chat" />
+            <Stack.Screen name="profile/edit" />
           </Stack>
         </AuthGuard>
       </AuthInitializer>

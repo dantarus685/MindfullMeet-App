@@ -18,7 +18,16 @@ import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
 import { useSelector } from 'react-redux';
 import api from '../../src/config/api';
-import DateTimePickerModal from 'react-native-modal-datetime-picker'; // You'll need to install this
+
+// Conditional import for DateTimePicker (only on mobile)
+let DateTimePicker = null;
+if (Platform.OS !== 'web') {
+  try {
+    DateTimePicker = require('@react-native-community/datetimepicker').default;
+  } catch (error) {
+    console.log('DateTimePicker not available');
+  }
+}
 
 export default function CreateScreen() {
   const { colors, spacing, typography, effects, isDark } = useTheme();
@@ -46,9 +55,11 @@ export default function CreateScreen() {
     tags: []
   });
   
-  // Date picker state
+  // Date picker state (only for mobile)
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
+  const [startPickerMode, setStartPickerMode] = useState('date');
+  const [endPickerMode, setEndPickerMode] = useState('date');
   
   // Location type (online/in-person)
   const [locationType, setLocationType] = useState('in-person');
@@ -67,21 +78,98 @@ export default function CreateScreen() {
   const updateFormData = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
+
+  // Format date to datetime-local string for web input
+  const formatDateForInput = (date) => {
+    if (Platform.OS === 'web') {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+    return date.toISOString();
+  };
+
+  // Parse datetime-local string to Date object
+  const parseDateFromInput = (dateString) => {
+    return new Date(dateString);
+  };
   
-  // Handle date selection
-  const handleStartDateConfirm = (date) => {
-    updateFormData('startTime', date);
-    setShowStartPicker(false);
+  // Handle date/time selection for mobile
+  const handleStartDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') {
+      setShowStartPicker(false);
+    }
     
-    // If end time is before new start time, update end time
-    if (formData.endTime < date) {
-      updateFormData('endTime', new Date(date.getTime() + 60 * 60 * 1000));
+    if (selectedDate) {
+      updateFormData('startTime', selectedDate);
+      
+      // If end time is before new start time, update end time
+      if (formData.endTime < selectedDate) {
+        updateFormData('endTime', new Date(selectedDate.getTime() + 60 * 60 * 1000));
+      }
+      
+      // On iOS, show time picker after date selection
+      if (Platform.OS === 'ios' && startPickerMode === 'date') {
+        setStartPickerMode('time');
+      } else {
+        setStartPickerMode('date');
+        if (Platform.OS === 'ios') {
+          setShowStartPicker(false);
+        }
+      }
     }
   };
   
-  const handleEndDateConfirm = (date) => {
-    updateFormData('endTime', date);
-    setShowEndPicker(false);
+  const handleEndDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') {
+      setShowEndPicker(false);
+    }
+    
+    if (selectedDate) {
+      updateFormData('endTime', selectedDate);
+      
+      // On iOS, show time picker after date selection
+      if (Platform.OS === 'ios' && endPickerMode === 'date') {
+        setEndPickerMode('time');
+      } else {
+        setEndPickerMode('date');
+        if (Platform.OS === 'ios') {
+          setShowEndPicker(false);
+        }
+      }
+    }
+  };
+
+  // Handle web date input changes
+  const handleWebStartDateChange = (value) => {
+    const newDate = parseDateFromInput(value);
+    updateFormData('startTime', newDate);
+    
+    // If end time is before new start time, update end time
+    if (formData.endTime < newDate) {
+      updateFormData('endTime', new Date(newDate.getTime() + 60 * 60 * 1000));
+    }
+  };
+
+  const handleWebEndDateChange = (value) => {
+    const newDate = parseDateFromInput(value);
+    updateFormData('endTime', newDate);
+  };
+  
+  // Show date picker for mobile
+  const showStartDatePicker = () => {
+    if (Platform.OS === 'web') return;
+    setStartPickerMode('date');
+    setShowStartPicker(true);
+  };
+  
+  const showEndDatePicker = () => {
+    if (Platform.OS === 'web') return;
+    setEndPickerMode('date');
+    setShowEndPicker(true);
   };
   
   // Format date for display
@@ -123,6 +211,12 @@ export default function CreateScreen() {
       return;
     }
     
+    // Validate end time is after start time
+    if (formData.endTime <= formData.startTime) {
+      Alert.alert('Error', 'End time must be after start time');
+      return;
+    }
+    
     try {
       setLoading(true);
       
@@ -133,6 +227,8 @@ export default function CreateScreen() {
         // Convert maxParticipants to number
         maxParticipants: formData.maxParticipants ? parseInt(formData.maxParticipants) : null
       };
+      
+      console.log('Creating event with data:', eventData);
       
       // Create event
       const response = await api.post('/api/events', eventData);
@@ -161,6 +257,34 @@ export default function CreateScreen() {
       );
     }
   };
+
+  // Web-specific date input component
+  const WebDateInput = ({ value, onChange, placeholder }) => (
+    <input
+      type="datetime-local"
+      value={formatDateForInput(value)}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        backgroundColor: colors.card,
+        borderRadius: 8,
+        padding: spacing.md,
+        fontSize: 16,
+        color: colors.text,
+        border: `1px solid ${colors.lightGrey}`,
+        width: '100%',
+        outline: 'none',
+      }}
+      min={formatDateForInput(new Date())}
+    />
+  );
+
+  // Mobile date input component
+  const MobileDateInput = ({ value, onPress, placeholder }) => (
+    <TouchableOpacity style={styles.selectRow} onPress={onPress}>
+      <Text style={styles.selectText}>{formatDate(value)}</Text>
+      <Ionicons name="calendar-outline" size={20} color={colors.primary} />
+    </TouchableOpacity>
+  );
   
   const styles = StyleSheet.create({
     container: {
@@ -314,6 +438,22 @@ export default function CreateScreen() {
     activeLocationTypeText: {
       color: colors.white,
     },
+    // Responsive input row styles
+    inputRow: {
+      flexDirection: 'row',
+      marginTop: spacing.sm,
+      alignItems: 'center',
+    },
+    inputRowItem: {
+      marginRight: 0, // Remove default margin
+    },
+    inputRowItemSmall: {
+      flex: 1,
+      marginRight: spacing.sm,
+    },
+    inputRowItemLarge: {
+      flex: 2,
+    },
   });
 
   if (!isAuthenticated) {
@@ -433,45 +573,57 @@ export default function CreateScreen() {
               </View>
               
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Date & Time</Text>
+                <Text style={styles.label}>Start Date & Time</Text>
+                {Platform.OS === 'web' ? (
+                  <WebDateInput
+                    value={formData.startTime}
+                    onChange={handleWebStartDateChange}
+                    placeholder="Start time"
+                  />
+                ) : (
+                  <MobileDateInput
+                    value={formData.startTime}
+                    onPress={showStartDatePicker}
+                    placeholder="Start time"
+                  />
+                )}
                 
-                <TouchableOpacity 
-                  style={[styles.selectRow, { marginBottom: spacing.sm }]}
-                  onPress={() => setShowStartPicker(true)}
-                >
-                  <Text style={styles.selectText}>
-                    {formatDate(formData.startTime)}
-                  </Text>
-                  <Ionicons name="calendar-outline" size={20} color={colors.primary} />
-                </TouchableOpacity>
+                {Platform.OS !== 'web' && showStartPicker && DateTimePicker && (
+                  <DateTimePicker
+                    value={formData.startTime}
+                    mode={startPickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleStartDateChange}
+                    minimumDate={new Date()}
+                  />
+                )}
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>End Date & Time</Text>
+                {Platform.OS === 'web' ? (
+                  <WebDateInput
+                    value={formData.endTime}
+                    onChange={handleWebEndDateChange}
+                    placeholder="End time"
+                  />
+                ) : (
+                  <MobileDateInput
+                    value={formData.endTime}
+                    onPress={showEndDatePicker}
+                    placeholder="End time"
+                  />
+                )}
                 
-                <TouchableOpacity 
-                  style={styles.selectRow}
-                  onPress={() => setShowEndPicker(true)}
-                >
-                  <Text style={styles.selectText}>
-                    {formatDate(formData.endTime)}
-                  </Text>
-                  <Ionicons name="time-outline" size={20} color={colors.primary} />
-                </TouchableOpacity>
-                
-                <DateTimePickerModal
-                  isVisible={showStartPicker}
-                  mode="datetime"
-                  onConfirm={handleStartDateConfirm}
-                  onCancel={() => setShowStartPicker(false)}
-                  date={formData.startTime}
-                  minimumDate={new Date()}
-                />
-                
-                <DateTimePickerModal
-                  isVisible={showEndPicker}
-                  mode="datetime"
-                  onConfirm={handleEndDateConfirm}
-                  onCancel={() => setShowEndPicker(false)}
-                  date={formData.endTime}
-                  minimumDate={formData.startTime}
-                />
+                {Platform.OS !== 'web' && showEndPicker && DateTimePicker && (
+                  <DateTimePicker
+                    value={formData.endTime}
+                    mode={endPickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleEndDateChange}
+                    minimumDate={formData.startTime}
+                  />
+                )}
               </View>
               
               <View style={styles.inputGroup}>
@@ -520,9 +672,9 @@ export default function CreateScreen() {
                       onChangeText={(text) => updateFormData('address', text)}
                     />
                     
-                    <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
+                    <View style={styles.inputRow}>
                       <TextInput
-                        style={[styles.input, { flex: 2, marginRight: spacing.sm }]}
+                        style={[styles.input, styles.inputRowItem, styles.inputRowItemLarge]}
                         placeholder="City"
                         placeholderTextColor={colors.grey}
                         value={formData.city}
@@ -530,7 +682,7 @@ export default function CreateScreen() {
                       />
                       
                       <TextInput
-                        style={[styles.input, { flex: 1 }]}
+                        style={[styles.input, styles.inputRowItem, styles.inputRowItemSmall]}
                         placeholder="State"
                         placeholderTextColor={colors.grey}
                         value={formData.state}
@@ -538,9 +690,9 @@ export default function CreateScreen() {
                       />
                     </View>
                     
-                    <View style={{ flexDirection: 'row', marginTop: spacing.sm }}>
+                    <View style={styles.inputRow}>
                       <TextInput
-                        style={[styles.input, { flex: 1, marginRight: spacing.sm }]}
+                        style={[styles.input, styles.inputRowItem, styles.inputRowItemSmall]}
                         placeholder="Zip"
                         placeholderTextColor={colors.grey}
                         value={formData.zipCode}
@@ -549,7 +701,7 @@ export default function CreateScreen() {
                       />
                       
                       <TextInput
-                        style={[styles.input, { flex: 2 }]}
+                        style={[styles.input, styles.inputRowItem, styles.inputRowItemLarge]}
                         placeholder="Country"
                         placeholderTextColor={colors.grey}
                         value={formData.country}
@@ -560,11 +712,12 @@ export default function CreateScreen() {
                 ) : (
                   <TextInput
                     style={[styles.input, { marginTop: spacing.sm }]}
-                    placeholder="Meeting Link"
+                    placeholder="Meeting Link (e.g., Zoom, Google Meet)"
                     placeholderTextColor={colors.grey}
                     value={formData.meetingLink}
                     onChangeText={(text) => updateFormData('meetingLink', text)}
                     keyboardType="url"
+                    autoCapitalize="none"
                   />
                 )}
               </View>
@@ -590,6 +743,7 @@ export default function CreateScreen() {
                   value={formData.imageUrl}
                   onChangeText={(text) => updateFormData('imageUrl', text)}
                   keyboardType="url"
+                  autoCapitalize="none"
                 />
               </View>
               

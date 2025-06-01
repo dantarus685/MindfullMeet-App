@@ -1,4 +1,4 @@
-// app/chat/[id].jsx - Enhanced version with ESLint fixes
+// app/chat/[id].jsx - COMPLETE FIXED VERSION
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
@@ -31,6 +31,7 @@ import {
   setActiveRoom,
   clearActiveRoom,
   addOptimisticMessage,
+  removeOptimisticMessage,
   selectTypingUsers,
   selectOnlineUsers,
   selectRoomById,
@@ -398,7 +399,7 @@ export default function ChatRoomScreen() {
   
   // Refs
   const flatListRef = useRef(null);
-  const socketListenerRef = useRef(null);
+  const lastMessageId = useRef(null);
 
   const styles = StyleSheet.create({
     container: {
@@ -559,24 +560,31 @@ export default function ChatRoomScreen() {
       console.log('🔌 Socket connected, joining room:', roomId);
       setTimeout(() => {
         socketService.joinRoom(roomId);
-      }, 500); // Small delay to ensure connection is stable
+      }, 500);
     }
   }, [isConnected, roomId]);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive (but prevent duplicate scrolling)
   useEffect(() => {
     if (messages.length > 0 && flatListRef.current) {
-      const timer = setTimeout(() => {
-        try {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        } catch (error) {
-          console.warn('Failed to scroll to end:', error);
-        }
-      }, 100);
+      const latestMessage = messages[messages.length - 1];
       
-      return () => clearTimeout(timer);
+      // Only scroll if it's a new message
+      if (latestMessage.id !== lastMessageId.current) {
+        lastMessageId.current = latestMessage.id;
+        
+        const timer = setTimeout(() => {
+          try {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          } catch (error) {
+            console.warn('Failed to scroll to end:', error);
+          }
+        }, 100);
+        
+        return () => clearTimeout(timer);
+      }
     }
-  }, [messages.length]);
+  }, [messages]);
 
   // Mark messages as read when screen is focused
   useFocusEffect(
@@ -590,69 +598,73 @@ export default function ChatRoomScreen() {
     }, [dispatch, roomId])
   );
 
-  // Socket event listeners
-  useEffect(() => {
-    const removeListener = socketService.addEventListener('newMessage', (data) => {
-      if (data.roomId === roomId) {
-        // Auto-scroll if user is near bottom
-        setTimeout(() => {
-          if (flatListRef.current) {
-            flatListRef.current.scrollToEnd({ animated: true });
-          }
-        }, 100);
-      }
-    });
-
-    socketListenerRef.current = removeListener;
-    
-    return () => {
-      if (socketListenerRef.current) {
-        socketListenerRef.current();
-      }
-    };
-  }, [roomId]);
-
-  // Send message handler
+  // FIXED: Send message handler - prevent duplicates
   const handleSendMessage = useCallback(async (content) => {
     if (!content.trim() || sending) return;
 
-    const tempId = `temp_${Date.now()}_${Math.random()}`;
     setSending(true);
+    const messageContent = content.trim();
+    const tempId = `temp_${Date.now()}_${Math.random()}`;
 
     try {
-      console.log('📤 Sending message:', content);
+      console.log('📤 Sending message:', messageContent);
       
-      // Add optimistic message for immediate feedback
+      // Add optimistic message immediately for UI feedback
       dispatch(addOptimisticMessage({ 
         roomId, 
-        content: content.trim(),
+        content: messageContent,
         tempId 
       }));
 
-      // Scroll to bottom immediately
+      // Scroll to show optimistic message
       setTimeout(() => {
         if (flatListRef.current) {
           flatListRef.current.scrollToEnd({ animated: true });
         }
       }, 50);
       
+      // FIXED: Only send via ONE method to prevent duplicates
+      let messageSent = false;
+      
+      // Try socket first if connected
       if (isConnected && socketService.getConnectionStatus()) {
         console.log('🚀 Sending via socket...');
-        const success = socketService.sendMessage(roomId, content.trim());
+        const socketTempId = socketService.sendMessage(roomId, messageContent);
         
-        if (!success) {
-          console.log('❌ Socket send failed, using API...');
-          await dispatch(sendMessage({ roomId, content: content.trim() })).unwrap();
+        if (socketTempId) {
+          messageSent = true;
+          console.log('✅ Message sent via socket with tempId:', socketTempId);
+          
+          // The optimistic message will be replaced by the real message from socket event
+          // No need to remove it manually here
         }
-      } else {
-        console.log('🔄 Socket not connected, using API...');
-        await dispatch(sendMessage({ roomId, content: content.trim() })).unwrap();
       }
       
-      console.log('✅ Message sent successfully');
+      // Only use API as fallback if socket completely failed
+      if (!messageSent) {
+        console.log('🔄 Socket not available, using API fallback...');
+        
+        try {
+          const result = await dispatch(sendMessage({ roomId, content: messageContent })).unwrap();
+          
+          // Remove optimistic message since API will add the real one
+          dispatch(removeOptimisticMessage({ roomId, tempId }));
+          
+          console.log('✅ Message sent via API');
+        } catch (apiError) {
+          console.error('❌ API send failed:', apiError);
+          // Remove failed optimistic message
+          dispatch(removeOptimisticMessage({ roomId, tempId }));
+          throw apiError;
+        }
+      }
       
     } catch (error) {
-      console.error('Failed to send message:', error);
+      console.error('❌ Failed to send message:', error);
+      
+      // Remove failed optimistic message
+      dispatch(removeOptimisticMessage({ roomId, tempId }));
+      
       Alert.alert('Error', 'Failed to send message. Please try again.');
     } finally {
       setSending(false);
@@ -808,19 +820,10 @@ export default function ChatRoomScreen() {
           ListEmptyComponent={renderEmpty}
           onRefresh={handleRefresh}
           refreshing={refreshing}
-          maintainVisibleContentPosition={{
-            minIndexForVisible: 0,
-            autoscrollToTopThreshold: 10,
-          }}
           removeClippedSubviews={true}
           maxToRenderPerBatch={20}
           windowSize={10}
           initialNumToRender={20}
-          getItemLayout={(data, index) => ({
-            length: 80, // Approximate message height
-            offset: 80 * index,
-            index,
-          })}
         />
         
         {/* Typing indicator */}
