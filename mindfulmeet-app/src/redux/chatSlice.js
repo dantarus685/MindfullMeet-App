@@ -1,4 +1,4 @@
-// src/redux/chatSlice.js - Enhanced version
+// src/redux/chatSlice.js - ENHANCED VERSION 1 with all methods and fixes
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../config/api';
 
@@ -258,7 +258,7 @@ const chatSlice = createSlice({
       }
     },
     
-    // Message read status
+    // Message read status - THIS WAS THE MISSING METHOD YOU MENTIONED
     markRoomMessagesAsRead: (state, action) => {
       const roomId = action.payload;
       console.log(`👁️ Marking messages as read for room ${roomId}`);

@@ -151,6 +151,7 @@ console.log('✅ /api/users routes registered');
 
 app.use('/api/events', eventRoutes);
 console.log('✅ /api/events routes registered');
+app.use('/api/chat', supportRoutes); // For compatibility with frontend expecting /api/chat
 
 app.use('/api/tracking', trackingRoutes);
 console.log('✅ /api/tracking routes registered');
