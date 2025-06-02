@@ -1,10 +1,11 @@
-// src/redux/store.js
+// src/redux/store.js - FINAL CORRECTED VERSION - Proper SocketService initialization
 import { configureStore } from '@reduxjs/toolkit';
 import authReducer from './authSlice';
 import profileReducer from './profileSlice';
 import eventReducer from './eventSlice';
 import rsvpReducer from './rsvpSlice';
 import chatReducer from './chatSlice';
+import socketService from '../services/socketService';
 
 export const store = configureStore({
   reducer: {
@@ -71,6 +72,85 @@ export const store = configureStore({
     }),
   devTools: process.env.NODE_ENV !== 'production'
 });
+
+// **FIXED: Import socket service AFTER store creation to avoid circular dependency**
+
+// **FIXED: Set store reference in socket service**
+socketService.setStore(store);
+
+// **ENHANCED: More aggressive auth state monitoring for immediate socket connection**
+let previousAuthState = null;
+let initTimeout = null;
+let connectionAttemptCount = 0;
+
+const monitorAuthChanges = () => {
+  const currentState = store.getState();
+  const currentAuth = {
+    user: currentState.auth?.user,
+    token: currentState.auth?.token,
+    isAuthenticated: currentState.auth?.isAuthenticated
+  };
+
+  const authChanged = JSON.stringify(currentAuth) !== JSON.stringify(previousAuthState);
+
+  if (authChanged || !socketService.getConnectionStatus()) {
+    console.log('🔄 Auth state changed or socket disconnected:', {
+      authChanged,
+      wasAuth: !!previousAuthState?.isAuthenticated,
+      nowAuth: !!currentAuth.isAuthenticated,
+      user: currentAuth.user?.name,
+      hasToken: !!currentAuth.token,
+      userId: currentAuth.user?.id,
+      socketConnected: socketService.getConnectionStatus(),
+      attemptCount: connectionAttemptCount
+    });
+
+    // Clear any pending initialization
+    if (initTimeout) {
+      clearTimeout(initTimeout);
+    }
+
+    // Immediate connection attempt for authenticated users
+    if (currentAuth.isAuthenticated && currentAuth.user && currentAuth.token) {
+      connectionAttemptCount++;
+      
+      // **IMMEDIATE**: Try to connect right away if not connected
+      if (!socketService.getConnectionStatus()) {
+        console.log('🚀 Store: Immediate socket auto-connect attempt...');
+        socketService.forceAutoConnect().catch(error => {
+          console.error('❌ Store: Immediate auto-connect failed:', error);
+        });
+      }
+      
+      // **BACKUP**: Also schedule a delayed attempt
+      initTimeout = setTimeout(() => {
+        if (currentAuth.isAuthenticated && currentAuth.user && currentAuth.token && !socketService.getConnectionStatus()) {
+          console.log('🔄 Store: Backup socket auto-connect attempt...');
+          socketService.forceAutoConnect().catch(error => {
+            console.error('❌ Store: Backup auto-connect failed:', error);
+          });
+        }
+      }, 1000);
+      
+    } else if (previousAuthState?.isAuthenticated && !currentAuth.isAuthenticated) {
+      console.log('🔌 Store: User logged out, disconnecting socket...');
+      socketService.disconnect();
+      connectionAttemptCount = 0;
+    }
+
+    previousAuthState = { ...currentAuth };
+  }
+};
+
+// Subscribe to store changes
+console.log('🔗 Setting up auth state monitoring for socket service...');
+store.subscribe(monitorAuthChanges);
+
+// **FIXED: Initial check with proper delay**
+setTimeout(() => {
+  console.log('🚀 Performing initial socket auto-connect check...');
+  monitorAuthChanges();
+}, 2000);
 
 // Export helper functions for getting typed dispatch and state
 export const getRootState = () => store.getState();

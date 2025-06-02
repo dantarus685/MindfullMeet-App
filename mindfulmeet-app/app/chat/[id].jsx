@@ -1,4 +1,4 @@
-// app/chat/[id].jsx - COMPLETE FIXED VERSION - Enhanced message loading
+// app/chat/[id].jsx - CORRECTED VERSION - Complete with proper MessageBubble styling
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
@@ -43,79 +43,108 @@ const MessageBubble = React.memo(function MessageBubble({ message, isCurrentUser
   const { colors, spacing } = useTheme();
   
   const styles = StyleSheet.create({
+    // Main container that takes full width
     outerContainer: {
       width: '100%',
       marginVertical: spacing.xs,
       paddingHorizontal: spacing.md,
     },
+    
+    // Sender name container (for group chats)
     senderContainer: {
       marginBottom: 4,
-      alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
       paddingHorizontal: spacing.xs,
+      // Align sender name based on message direction
+      alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
+      maxWidth: '80%',
     },
     senderText: {
       fontSize: 12,
       color: colors.textSecondary,
       fontWeight: '500',
+      textAlign: isCurrentUser ? 'right' : 'left',
     },
+    
+    // Message row container - this is key for proper alignment
     messageContainer: {
       flexDirection: 'row',
+      // Align entire message to left or right
       justifyContent: isCurrentUser ? 'flex-end' : 'flex-start',
       alignItems: 'flex-end',
+      width: '100%',
     },
+    
+    // Avatar space for group chats (only on left side for received messages)
+    avatarSpace: {
+      width: 32,
+      marginRight: spacing.xs,
+      // Only show for received messages in group chats
+    },
+    
+    // The actual message bubble
     bubble: {
-      backgroundColor: isCurrentUser ? '#DCF8C6' : colors.white || '#FFFFFF',
+      // Different colors for sent vs received
+      backgroundColor: isCurrentUser ? '#007AFF' : '#F0F0F0',
       borderRadius: 18,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
-      maxWidth: '80%',
-      minWidth: '20%',
+      maxWidth: '75%', // Limit width so messages don't stretch too much
+      minWidth: 60, // Minimum width for very short messages
+      
       // WhatsApp-style bubble tails
       borderBottomRightRadius: isCurrentUser ? 4 : 18,
       borderBottomLeftRadius: isCurrentUser ? 18 : 4,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      // Enhanced shadows for better depth
-      elevation: 2,
+      
+      // Shadow for depth
+      elevation: 1,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.15,
-      shadowRadius: 3,
-      // Border for received messages (WhatsApp style)
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      
+      // Subtle border for received messages
       borderWidth: isCurrentUser ? 0 : 0.5,
       borderColor: isCurrentUser ? 'transparent' : '#E0E0E0',
     },
+    
+    // Style for optimistic messages (sending state)
     optimisticBubble: {
       opacity: 0.7,
     },
+    
+    // Message content container
     messageContent: {
       width: '100%',
     },
+    
+    // Message text styling
     messageText: {
-      color: isCurrentUser ? '#000000' : colors.text || '#000000',
+      // White text on blue background for sent, dark text on light background for received
+      color: isCurrentUser ? '#FFFFFF' : '#000000',
       fontSize: 16,
       lineHeight: 20,
       marginBottom: 2,
     },
+    
+    // Time and status container
     timeContainer: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: isCurrentUser ? 'flex-end' : 'flex-start',
       marginTop: 2,
     },
+    
+    // Time text styling
     timeText: {
-      color: isCurrentUser ? 'rgba(0,0,0,0.5)' : colors.textSecondary || 'rgba(0,0,0,0.5)',
+      color: isCurrentUser ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.5)',
       fontSize: 11,
       fontWeight: '400',
     },
+    
+    // Status icon (checkmarks for sent messages)
     statusIcon: {
       marginLeft: 4,
     },
-    // WhatsApp-style avatar space for group chats
-    avatarSpace: {
-      width: 32,
-      marginRight: spacing.xs,
-    }
   });
 
   const formatTime = (dateString) => {
@@ -132,19 +161,19 @@ const MessageBubble = React.memo(function MessageBubble({ message, isCurrentUser
 
   const getStatusIcon = () => {
     if (message.isOptimistic) {
-      return <Ionicons name="time-outline" size={12} color="rgba(0,0,0,0.4)" />;
+      return <Ionicons name="time-outline" size={12} color={isCurrentUser ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.4)"} />;
     }
     if (isCurrentUser) {
       return message.isRead ? 
-        <Ionicons name="checkmark-done" size={12} color="#4FC3F7" /> :
-        <Ionicons name="checkmark" size={12} color="rgba(0,0,0,0.4)" />;
+        <Ionicons name="checkmark-done" size={12} color="rgba(255,255,255,0.9)" /> :
+        <Ionicons name="checkmark" size={12} color="rgba(255,255,255,0.8)" />;
     }
     return null;
   };
 
   return (
     <View style={styles.outerContainer}>
-      {/* Sender name for group chats */}
+      {/* Sender name for group chats (only for received messages) */}
       {showSender && message.sender && !isCurrentUser && (
         <View style={styles.senderContainer}>
           <Text style={styles.senderText}>{message.sender.name}</Text>
@@ -152,11 +181,12 @@ const MessageBubble = React.memo(function MessageBubble({ message, isCurrentUser
       )}
       
       <View style={styles.messageContainer}>
-        {/* Avatar space for group chats (left side only) */}
+        {/* Avatar space only for received messages in group chats */}
         {!isCurrentUser && showSender && (
           <View style={styles.avatarSpace} />
         )}
         
+        {/* The message bubble */}
         <View style={[
           styles.bubble, 
           message.isOptimistic && styles.optimisticBubble
@@ -406,6 +436,21 @@ const ChatInput = React.memo(function ChatInput({ onSendMessage, onTyping, disab
   );
 });
 
+// **FIXED: Safe socketService method calls with error handling**
+const socketServiceCall = (method, ...args) => {
+  try {
+    if (socketService && typeof socketService[method] === 'function') {
+      return socketService[method](...args);
+    } else {
+      console.warn(`⚠️ SocketService method '${method}' not available`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ SocketService ${method} error:`, error);
+    return false;
+  }
+};
+
 export default function ChatRoomScreen() {
   const { colors, spacing, isDark } = useTheme();
   const dispatch = useDispatch();
@@ -618,22 +663,36 @@ export default function ChatRoomScreen() {
       }
     };
 
-    // Add socket event listeners
-    const removeRoomJoinedListener = socketService.addEventListener('roomJoined', handleRoomJoined);
-    const removeNewMessageListener = socketService.addEventListener('newMessage', handleNewMessage);
-    
-    socketEventListeners.current = [removeRoomJoinedListener, removeNewMessageListener];
+    // **FIXED: Safe socket event listener setup**
+    let removeRoomJoinedListener = null;
+    let removeNewMessageListener = null;
+
+    if (socketServiceCall('addEventListener')) {
+      removeRoomJoinedListener = socketServiceCall('addEventListener', 'roomJoined', handleRoomJoined);
+      removeNewMessageListener = socketServiceCall('addEventListener', 'newMessage', handleNewMessage);
+      
+      if (removeRoomJoinedListener) socketEventListeners.current.push(removeRoomJoinedListener);
+      if (removeNewMessageListener) socketEventListeners.current.push(removeNewMessageListener);
+    }
     
     return () => {
       console.log('🧹 Cleaning up chat room:', roomId);
       
       // Remove socket event listeners
-      socketEventListeners.current.forEach(removeListener => removeListener());
+      socketEventListeners.current.forEach(removeListener => {
+        try {
+          if (typeof removeListener === 'function') {
+            removeListener();
+          }
+        } catch (error) {
+          console.warn('Error removing socket listener:', error);
+        }
+      });
       socketEventListeners.current = [];
       
       // Leave socket room
-      if (socketService.getConnectionStatus()) {
-        socketService.leaveRoom(roomId);
+      if (socketServiceCall('getConnectionStatus')) {
+        socketServiceCall('leaveRoom', roomId);
       }
       
       // Clear active room
@@ -643,12 +702,12 @@ export default function ChatRoomScreen() {
 
   // **ENHANCED: Better socket room joining logic**
   useEffect(() => {
-    if (isConnected && roomId && socketService.getConnectionStatus() && !socketJoinAttempted) {
+    if (isConnected && roomId && socketServiceCall('getConnectionStatus') && !socketJoinAttempted) {
       console.log('🚪 Socket connected, joining room:', roomId);
       
       // Add a small delay to ensure socket is fully ready
       setTimeout(() => {
-        const joined = socketService.joinRoom(roomId);
+        const joined = socketServiceCall('joinRoom', roomId);
         if (joined) {
           setSocketJoinAttempted(true);
           console.log('✅ Socket room join initiated');
@@ -682,20 +741,26 @@ export default function ChatRoomScreen() {
     }
   }, [messages]);
 
-  // Mark messages as read when screen is focused
+  // **FIXED: Mark messages as read when screen is focused - with safe socketService calls**
   useFocusEffect(
     useCallback(() => {
       if (roomId) {
         console.log('👁️ Screen focused, marking messages as read');
         dispatch(markRoomMessagesAsRead(roomId));
-        if (socketService.getConnectionStatus()) {
-          socketService.markMessagesAsRead(roomId);
+        
+        // **FIXED: Safe call to socketService with fallback**
+        if (socketServiceCall('getConnectionStatus')) {
+          // Try to call markMessagesAsRead, but handle if it doesn't exist
+          const marked = socketServiceCall('markMessagesAsRead', roomId);
+          if (!marked) {
+            console.log('ℹ️ markMessagesAsRead not available in socketService, using Redux only');
+          }
         }
       }
     }, [dispatch, roomId])
   );
 
-  // **FIXED: Enhanced send message handler**
+  // **FIXED: Enhanced send message handler with better socket error handling**
   const handleSendMessage = useCallback(async (content) => {
     if (!content.trim() || sending) return;
 
@@ -720,17 +785,19 @@ export default function ChatRoomScreen() {
         }
       }, 50);
       
-      // **ENHANCED: Try socket first, fallback to API**
+      // **ENHANCED: Try socket first, fallback to API with better error handling**
       let messageSent = false;
       
       // Try socket if connected
-      if (isConnected && socketService.getConnectionStatus()) {
+      if (isConnected && socketServiceCall('getConnectionStatus')) {
         console.log('🚀 Sending via socket...');
-        const socketTempId = socketService.sendMessage(roomId, messageContent);
+        const socketTempId = socketServiceCall('sendMessage', roomId, messageContent);
         
         if (socketTempId) {
           messageSent = true;
           console.log('✅ Message sent via socket');
+        } else {
+          console.log('⚠️ Socket send failed, falling back to API...');
         }
       }
       
@@ -767,10 +834,13 @@ export default function ChatRoomScreen() {
     }
   }, [dispatch, roomId, sending, isConnected]);
 
-  // Typing indicator handler
+  // **FIXED: Typing indicator handler with safe socketService call**
   const handleTyping = useCallback((isTyping) => {
-    if (isConnected && socketService.getConnectionStatus()) {
-      socketService.sendTypingIndicator(roomId, isTyping);
+    if (isConnected && socketServiceCall('getConnectionStatus')) {
+      const sent = socketServiceCall('sendTypingIndicator', roomId, isTyping);
+      if (!sent) {
+        console.log('ℹ️ Typing indicator not sent - method not available');
+      }
     }
   }, [roomId, isConnected]);
 

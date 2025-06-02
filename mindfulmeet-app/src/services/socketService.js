@@ -1,18 +1,6 @@
-// src/services/socketService.js - FIXED VERSION WITH BETTER AUTO-CONNECTION
+// src/services/socketService.js - ENHANCED AUTO-CONNECT VERSION
 import io from 'socket.io-client';
 import { Platform } from 'react-native';
-import { store } from '../redux/store';
-import { 
-  setConnectionStatus, 
-  addMessage, 
-  setUserTyping, 
-  setUserOnlineStatus,
-  markRoomMessagesAsRead,
-  updateRoomOrder,
-  removeOptimisticMessage,
-  prependMessages,
-  setMessagePagination
-} from '../redux/chatSlice';
 
 const getSocketUrl = () => {
   const baseUrl = 'http://192.168.56.1:5000';
@@ -38,16 +26,99 @@ class SocketService {
     this.reconnectTimer = null;
     this.pingInterval = null;
     this.autoConnectEnabled = true;
+    this.store = null; // Will be set by store
     
     // Track sent messages to prevent duplicates
-    this.sentMessages = new Map(); // tempId -> real message data
-    this.pendingMessages = new Set(); // track messages being sent
-    this.processedMessageIds = new Set(); // prevent duplicate processing
+    this.sentMessages = new Map();
+    this.pendingMessages = new Set();
+    this.processedMessageIds = new Set();
     
     // Auto-connection state tracking
     this.lastConnectedUser = null;
     this.lastConnectedToken = null;
     this.isAutoConnecting = false;
+    this.hasTriedInitialConnection = false;
+    
+    // **NEW: Auto-connect checker interval**
+    this.autoConnectChecker = null;
+    this.startAutoConnectChecker();
+  }
+
+  // **NEW: Start periodic auto-connect checker**
+  startAutoConnectChecker() {
+    if (this.autoConnectChecker) {
+      clearInterval(this.autoConnectChecker);
+    }
+    
+    // Check every 3 seconds if we should auto-connect
+    this.autoConnectChecker = setInterval(() => {
+      if (!this.isConnected && !this.isAutoConnecting && this.autoConnectEnabled) {
+        this.checkAndAutoConnect();
+      }
+    }, 3000);
+    
+    console.log('🔄 Auto-connect checker started');
+  }
+
+  // **NEW: Check if we should auto-connect and do it**
+  async checkAndAutoConnect() {
+    try {
+      const state = this.getState();
+      if (!state) return;
+
+      const user = state.auth?.user;
+      const token = state.auth?.token;
+      const isAuthenticated = state.auth?.isAuthenticated;
+
+      // Check if we have everything needed for connection
+      if (user && token && isAuthenticated) {
+        // Check if we're not already connected with this user/token
+        const shouldConnect = !this.isConnected || 
+                             this.lastConnectedUser?.id !== user.id || 
+                             this.lastConnectedToken !== token;
+
+        if (shouldConnect) {
+          console.log('🚀 Auto-connect checker: Starting connection...', {
+            userConnected: this.lastConnectedUser?.id === user.id,
+            tokenMatches: this.lastConnectedToken === token,
+            isConnected: this.isConnected
+          });
+          
+          await this.autoConnect();
+        }
+      }
+    } catch (error) {
+      console.error('❌ Auto-connect checker error:', error);
+    }
+  }
+
+  // Set store reference - called by store after creation
+  setStore(store) {
+    this.store = store;
+    console.log('🔗 Store reference set for socket service');
+    
+    // **NEW: Immediately check for auto-connect once store is set**
+    setTimeout(() => {
+      this.checkAndAutoConnect();
+    }, 1000);
+  }
+
+  // Get store state safely
+  getState() {
+    if (!this.store) {
+      console.warn('⚠️ Store not available in socket service');
+      return null;
+    }
+    return this.store.getState();
+  }
+
+  // Dispatch action safely
+  dispatch(action) {
+    if (!this.store) {
+      console.warn('⚠️ Store not available for dispatch:', action);
+      return;
+    }
+    this.store.dispatch(action);
   }
 
   log(message, data = '') {
@@ -60,24 +131,34 @@ class SocketService {
     console.error(`[SocketService] ${message}`, data);
   }
 
-  // IMPROVED AUTO-CONNECTION - This is the key fix!
+  // **ENHANCED: Auto-connection with immediate retry**
   async autoConnect() {
     if (this.isAutoConnecting) {
       this.log('Auto-connection already in progress, skipping');
-      return;
+      return false;
     }
     
     this.isAutoConnecting = true;
 
     try {
-      const state = store.getState();
+      const state = this.getState();
+      if (!state) {
+        this.log('⚠️ No store state available for auto-connection');
+        return false;
+      }
+
       const user = state.auth?.user;
       const token = state.auth?.token;
+      const isAuthenticated = state.auth?.isAuthenticated;
 
       // Check if we should auto-connect
-      if (!user || !token) {
-        this.log('⚠️ No user or token for auto-connection');
-        return;
+      if (!user || !token || !isAuthenticated) {
+        this.log('⚠️ No user/token/auth for auto-connection', {
+          hasUser: !!user,
+          hasToken: !!token,
+          isAuthenticated
+        });
+        return false;
       }
 
       // Check if already connected with same user/token
@@ -85,32 +166,49 @@ class SocketService {
           this.lastConnectedUser?.id === user.id && 
           this.lastConnectedToken === token) {
         this.log('✅ Already connected with same user, skipping auto-connect');
-        return;
+        return true;
       }
 
       this.log('🚀 Starting auto-connection...', { 
         userId: user.id, 
         userName: user.name,
-        hasToken: !!token 
+        hasToken: !!token,
+        tokenPreview: token ? token.substring(0, 20) + '...' : 'none'
       });
 
       // Store current user/token for tracking
       this.lastConnectedUser = user;
       this.lastConnectedToken = token;
+      this.hasTriedInitialConnection = true;
 
       // Connect
       const success = await this.connect(token);
       
       if (success) {
         this.log('✅ Auto-connection successful!');
+        return true;
       } else {
         this.error('❌ Auto-connection failed');
+        return false;
       }
     } catch (error) {
       this.error('❌ Auto-connection error:', error.message);
+      return false;
     } finally {
       this.isAutoConnecting = false;
     }
+  }
+
+  // **NEW: Force immediate connection check - called by chat screen**
+  async forceAutoConnect() {
+    console.log('🔥 Force auto-connect requested from chat screen');
+    
+    // Reset flags to force a fresh attempt
+    this.hasTriedInitialConnection = false;
+    this.lastConnectedUser = null;
+    this.lastConnectedToken = null;
+    
+    return this.autoConnect();
   }
 
   // Enhanced connect method
@@ -171,8 +269,8 @@ class SocketService {
 
       // Get and validate token
       if (!token) {
-        const state = store.getState();
-        token = state.auth?.token;
+        const state = this.getState();
+        token = state?.auth?.token;
       }
 
       if (!token) {
@@ -232,14 +330,16 @@ class SocketService {
           this.log('✅ Socket connected successfully, ID:', this.socket.id);
           this.isConnected = true;
           this.reconnectAttempts = 0;
-          store.dispatch(setConnectionStatus(true));
+          this.updateConnectionStatus(true);
           
           // Start heartbeat
           this._startPingInterval();
           
-          // Clean up listeners
-          this.socket.off('connect', onConnect);
-          this.socket.off('connect_error', onConnectError);
+          // Clean up listeners safely
+          if (this.socket) {
+            this.socket.off('connect', onConnect);
+            this.socket.off('connect_error', onConnectError);
+          }
           resolve(true);
         };
 
@@ -247,8 +347,11 @@ class SocketService {
           clearTimeout(connectTimeout);
           this.error('❌ Connection failed:', error.message);
           this._cleanup();
-          this.socket.off('connect', onConnect);
-          this.socket.off('connect_error', onConnectError);
+          // Safe cleanup
+          if (this.socket) {
+            this.socket.off('connect', onConnect);
+            this.socket.off('connect_error', onConnectError);
+          }
           reject(error);
         };
 
@@ -267,6 +370,19 @@ class SocketService {
     }
   }
 
+  // Safe connection status update
+  updateConnectionStatus(connected) {
+    try {
+      if (this.store) {
+        // Dynamically import to avoid circular dependency
+        const { setConnectionStatus } = require('../redux/chatSlice');
+        this.dispatch(setConnectionStatus(connected));
+      }
+    } catch (error) {
+      this.log('⚠️ Could not update connection status:', error.message);
+    }
+  }
+
   _setupEventHandlers() {
     if (!this.socket) return;
 
@@ -278,7 +394,7 @@ class SocketService {
       this.log('✅ Connected! Socket ID:', this.socket.id);
       this.isConnected = true;
       this.reconnectAttempts = 0;
-      store.dispatch(setConnectionStatus(true));
+      this.updateConnectionStatus(true);
       
       // Rejoin rooms after connection
       this._rejoinRooms();
@@ -288,7 +404,7 @@ class SocketService {
     this.socket.on('disconnect', (reason) => {
       this.log('❌ Disconnected:', reason);
       this.isConnected = false;
-      store.dispatch(setConnectionStatus(false));
+      this.updateConnectionStatus(false);
       this._stopPingInterval();
       this._emitToListeners('disconnected', { reason });
       
@@ -301,7 +417,7 @@ class SocketService {
     this.socket.on('connect_error', (error) => {
       this.error('❌ Connection error:', error.message);
       this.isConnected = false;
-      store.dispatch(setConnectionStatus(false));
+      this.updateConnectionStatus(false);
       this._emitToListeners('connect_error', { error });
       
       if (error.message?.includes('Authentication') || error.message?.includes('token')) {
@@ -311,13 +427,7 @@ class SocketService {
       }
     });
 
-    // SERVER CONFIRMATION EVENTS
-    this.socket.on('chatConnected', (data) => {
-      this.log('✅ Server confirmed chat connection:', data);
-      this._emitToListeners('chatConnected', data);
-    });
-
-    // ROOM EVENTS - FIXED TO HANDLE MESSAGE HISTORY
+    // ROOM EVENTS
     this.socket.on('roomJoined', (data) => {
       this.log('✅ Room joined with data:', data);
       
@@ -325,144 +435,142 @@ class SocketService {
         this.currentRooms.add(data.roomId);
       }
       
-      // **FIXED: Handle message history from room join**
+      // Handle message history from room join
       if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
         this.log(`📚 Received ${data.messages.length} messages from room join`);
         
-        const state = store.getState();
-        const existingMessages = state.chat.messagesByRoom[data.roomId] || [];
-        
-        // Only add messages if we don't have any yet (avoid duplicates)
-        if (existingMessages.length === 0) {
-          this.log('💾 Adding message history to Redux store');
+        try {
+          const state = this.getState();
+          const existingMessages = state?.chat?.messagesByRoom?.[data.roomId] || [];
           
-          // Format messages properly
-          const formattedMessages = data.messages.map(message => ({
-            id: message.id,
-            content: message.content,
-            senderId: message.senderId,
-            roomId: message.roomId || data.roomId,
-            isRead: message.isRead || false,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-            sender: message.sender || null
-          }));
-          
-          // Use prependMessages to add them chronologically
-          store.dispatch(prependMessages({ 
-            roomId: data.roomId, 
-            messages: formattedMessages 
-          }));
-        } else {
-          this.log('⚠️ Room already has messages, skipping history from socket');
+          // Only add messages if we don't have any yet (avoid duplicates)
+          if (existingMessages.length === 0) {
+            this.log('💾 Adding message history to Redux store');
+            
+            // Format messages properly
+            const formattedMessages = data.messages.map(message => ({
+              id: message.id,
+              content: message.content,
+              senderId: message.senderId,
+              roomId: message.roomId || data.roomId,
+              isRead: message.isRead || false,
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+              sender: message.sender || null
+            }));
+            
+            // Use prependMessages to add them chronologically
+            const { prependMessages } = require('../redux/chatSlice');
+            this.dispatch(prependMessages({ 
+              roomId: data.roomId, 
+              messages: formattedMessages 
+            }));
+          } else {
+            this.log('⚠️ Room already has messages, skipping history from socket');
+          }
+        } catch (error) {
+          this.error('❌ Error handling room messages:', error);
         }
       }
       
       this._emitToListeners('roomJoined', data);
     });
 
-    this.socket.on('roomLeft', (data) => {
-      this.log('📤 Room left:', data);
-      if (data.roomId) {
-        this.currentRooms.delete(data.roomId);
-      }
-      this._emitToListeners('roomLeft', data);
-    });
-
-    // MESSAGE EVENTS - FIXED TO PREVENT DUPLICATES
+    // MESSAGE EVENTS
     this.socket.on('newMessage', (data) => {
       this.log('📨 New message received:', data);
       const { message, roomId } = data;
       
       if (message && roomId) {
-        // Prevent duplicate processing
-        if (this.processedMessageIds.has(message.id)) {
-          this.log('⚠️ Message already processed, skipping:', message.id);
-          return;
-        }
-        
-        this.processedMessageIds.add(message.id);
-        
-        // Check if this is our own message that we sent
-        const state = store.getState();
-        const isOwnMessage = message.senderId === state.auth?.user?.id;
-        
-        if (isOwnMessage) {
-          // Remove any optimistic message with same content
-          const roomMessages = state.chat.messagesByRoom[roomId] || [];
-          const optimisticMessage = roomMessages.find(m => 
-            m.isOptimistic && 
-            m.content.trim() === message.content.trim() && 
-            m.senderId === message.senderId
-          );
-          
-          if (optimisticMessage) {
-            store.dispatch(removeOptimisticMessage({ 
-              roomId, 
-              tempId: optimisticMessage.id 
-            }));
-            this.log('🗑️ Removed optimistic message, adding real message');
+        try {
+          // Prevent duplicate processing
+          if (this.processedMessageIds.has(message.id)) {
+            this.log('⚠️ Message already processed, skipping:', message.id);
+            return;
           }
-        }
-        
-        // Check if message already exists (prevent duplicates)
-        const existingMessages = state.chat.messagesByRoom[roomId] || [];
-        const messageExists = existingMessages.find(m => m.id === message.id);
-        
-        if (!messageExists) {
-          const formattedMessage = {
-            id: message.id,
-            content: message.content,
-            senderId: message.senderId,
-            roomId: message.roomId || roomId,
-            isRead: message.isRead || false,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-            sender: message.sender
-          };
           
-          // Dispatch to Redux store
-          store.dispatch(addMessage({ roomId, message: formattedMessage }));
-          store.dispatch(updateRoomOrder(roomId));
+          this.processedMessageIds.add(message.id);
           
-          this.log('✅ Message added to store for room:', roomId);
-        } else {
-          this.log('⚠️ Message already exists, skipping duplicate:', message.id);
+          // Check if this is our own message that we sent
+          const state = this.getState();
+          const isOwnMessage = message.senderId === state?.auth?.user?.id;
+          
+          if (isOwnMessage) {
+            // Remove any optimistic message with same content
+            const roomMessages = state?.chat?.messagesByRoom?.[roomId] || [];
+            const optimisticMessage = roomMessages.find(m => 
+              m.isOptimistic && 
+              m.content.trim() === message.content.trim() && 
+              m.senderId === message.senderId
+            );
+            
+            if (optimisticMessage) {
+              const { removeOptimisticMessage } = require('../redux/chatSlice');
+              this.dispatch(removeOptimisticMessage({ 
+                roomId, 
+                tempId: optimisticMessage.id 
+              }));
+              this.log('🗑️ Removed optimistic message, adding real message');
+            }
+          }
+          
+          // Check if message already exists (prevent duplicates)
+          const existingMessages = state?.chat?.messagesByRoom?.[roomId] || [];
+          const messageExists = existingMessages.find(m => m.id === message.id);
+          
+          if (!messageExists) {
+            const formattedMessage = {
+              id: message.id,
+              content: message.content,
+              senderId: message.senderId,
+              roomId: message.roomId || roomId,
+              isRead: message.isRead || false,
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+              sender: message.sender
+            };
+            
+            // Dispatch to Redux store
+            const { addMessage, updateRoomOrder } = require('../redux/chatSlice');
+            this.dispatch(addMessage({ roomId, message: formattedMessage }));
+            this.dispatch(updateRoomOrder(roomId));
+            
+            this.log('✅ Message added to store for room:', roomId);
+          } else {
+            this.log('⚠️ Message already exists, skipping duplicate:', message.id);
+          }
+        } catch (error) {
+          this.error('❌ Error handling new message:', error);
         }
       }
       
       this._emitToListeners('newMessage', data);
     });
 
-    // MESSAGE SENT CONFIRMATION - HANDLE OPTIMISTIC UPDATES
-    this.socket.on('messageSent', (data) => {
-      this.log('✅ Message sent confirmation:', data);
-      
-      // Remove from pending messages
-      if (data.tempId) {
-        this.pendingMessages.delete(data.tempId);
-        this.sentMessages.set(data.tempId, data.message);
-      }
-      
-      this._emitToListeners('messageSent', data);
-    });
-
     // TYPING EVENTS
     this.socket.on('userTyping', (data) => {
+      this.log('⌨️ User typing event received:', data);
       const { roomId, userId, userName, isTyping } = data;
       
       if (roomId && userId) {
-        // Don't show typing for current user
-        const state = store.getState();
-        if (userId !== state.auth?.user?.id) {
-          store.dispatch(setUserTyping({ roomId, userId, userName, isTyping }));
-          
-          // Auto-clear typing after timeout
-          if (isTyping) {
-            setTimeout(() => {
-              store.dispatch(setUserTyping({ roomId, userId, userName, isTyping: false }));
-            }, 3000);
+        try {
+          // Don't show typing for current user
+          const state = this.getState();
+          if (userId !== state?.auth?.user?.id) {
+            const { setUserTyping } = require('../redux/chatSlice');
+            this.dispatch(setUserTyping({ roomId, userId, userName, isTyping }));
+            
+            // Auto-clear typing after timeout
+            if (isTyping) {
+              setTimeout(() => {
+                this.dispatch(setUserTyping({ roomId, userId, userName, isTyping: false }));
+              }, 3000);
+            }
+            
+            this.log(`⌨️ Updated typing status for user ${userName} in room ${roomId}: ${isTyping}`);
           }
+        } catch (error) {
+          this.error('❌ Error handling typing indicator:', error);
         }
       }
       
@@ -475,11 +583,16 @@ class SocketService {
       const { roomId, user } = data;
       
       if (roomId && user) {
-        store.dispatch(setUserOnlineStatus({ 
-          userId: user.id, 
-          status: 'online', 
-          roomId 
-        }));
+        try {
+          const { setUserOnlineStatus } = require('../redux/chatSlice');
+          this.dispatch(setUserOnlineStatus({ 
+            userId: user.id, 
+            status: 'online', 
+            roomId 
+          }));
+        } catch (error) {
+          this.error('❌ Error handling user joined room:', error);
+        }
       }
       
       this._emitToListeners('userJoinedRoom', data);
@@ -490,11 +603,16 @@ class SocketService {
       const { roomId, userId } = data;
       
       if (roomId && userId) {
-        store.dispatch(setUserOnlineStatus({ 
-          userId, 
-          status: 'offline', 
-          roomId 
-        }));
+        try {
+          const { setUserOnlineStatus } = require('../redux/chatSlice');
+          this.dispatch(setUserOnlineStatus({ 
+            userId, 
+            status: 'offline', 
+            roomId 
+          }));
+        } catch (error) {
+          this.error('❌ Error handling user left room:', error);
+        }
       }
       
       this._emitToListeners('userLeftRoom', data);
@@ -533,125 +651,6 @@ class SocketService {
       this.socket.onAny((eventName, ...args) => {
         if (!['pong', 'ping'].includes(eventName)) {
           this.log(`📡 Event: ${eventName}`, args);
-        }
-      });
-    }
-  }
-
-  // IMPROVED RECONNECTION LOGIC
-  _scheduleReconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-    }
-
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.error('❌ Max reconnection attempts reached');
-      return;
-    }
-
-    this.reconnectAttempts++;
-    const delay = Math.min(2000 * this.reconnectAttempts, 10000);
-    
-    this.log(`🔄 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
-    
-    this.reconnectTimer = setTimeout(() => {
-      if (!this.isConnected && this.lastToken) {
-        this.log('🔄 Attempting auto-reconnection...');
-        this.connect(this.lastToken);
-      }
-    }, delay);
-  }
-
-  _handleAuthError() {
-    this.error('❌ Authentication error, need fresh token');
-    
-    try {
-      const state = store.getState();
-      const newToken = state.auth?.token;
-      
-      if (newToken && newToken !== this.lastToken) {
-        this.log('🔄 Retrying with fresh token');
-        setTimeout(() => {
-          this.connect(newToken);
-        }, 2000);
-      } else {
-        this.error('❌ No fresh token available');
-      }
-    } catch (err) {
-      this.error('❌ Failed to get fresh token:', err);
-    }
-  }
-
-  _startPingInterval() {
-    this._stopPingInterval();
-    this.pingInterval = setInterval(() => {
-      if (this.isConnected && this.socket) {
-        this.ping({ heartbeat: true });
-      }
-    }, 30000); // Ping every 30 seconds
-  }
-
-  _stopPingInterval() {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-  }
-
-  _cleanup() {
-    this._stopPingInterval();
-    
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    
-    this.isConnected = false;
-    store.dispatch(setConnectionStatus(false));
-  }
-
-  _rejoinRooms() {
-    if (this.currentRooms.size > 0) {
-      this.log('🚪 Rejoining rooms:', Array.from(this.currentRooms));
-      setTimeout(() => {
-        this.currentRooms.forEach(roomId => {
-          this.joinRoom(roomId, false);
-        });
-      }, 1000);
-    }
-  }
-
-  // EVENT LISTENER MANAGEMENT
-  addEventListener(event, callback) {
-    if (!this.eventListeners.has(event)) {
-      this.eventListeners.set(event, new Set());
-    }
-    this.eventListeners.get(event).add(callback);
-    
-    return () => {
-      this.removeEventListener(event, callback);
-    };
-  }
-
-  removeEventListener(event, callback) {
-    if (this.eventListeners.has(event)) {
-      this.eventListeners.get(event).delete(callback);
-    }
-  }
-
-  _emitToListeners(event, data) {
-    if (this.eventListeners.has(event)) {
-      this.eventListeners.get(event).forEach(callback => {
-        try {
-          callback(data);
-        } catch (error) {
-          this.error(`❌ Error in event listener for ${event}:`, error);
         }
       });
     }
@@ -696,7 +695,6 @@ class SocketService {
     return true;
   }
 
-  // FIXED MESSAGE SENDING - NO DUPLICATES
   sendMessage(roomId, content) {
     if (!roomId || !content?.trim()) {
       this.error('❌ Cannot send message - missing data');
@@ -712,15 +710,13 @@ class SocketService {
     const messageData = {
       roomId: parseInt(roomId),
       content: content.trim(),
-      tempId // Include tempId for tracking
+      tempId
     };
 
-    // Track as pending to prevent duplicates
     this.pendingMessages.add(tempId);
 
     this.log('📤 Sending message to room:', roomId, 'Content:', content.substring(0, 50) + '...');
     
-    // Send with acknowledgment callback
     this.socket.emit('sendMessage', messageData, (response) => {
       this.pendingMessages.delete(tempId);
       
@@ -734,22 +730,174 @@ class SocketService {
       }
     });
     
-    return tempId; // Return tempId for tracking
+    return tempId;
   }
 
   sendTypingIndicator(roomId, isTyping) {
-    if (!roomId || !this.socket || !this.isConnected) return false;
+    if (!roomId || !this.socket || !this.isConnected) {
+      this.log('⚠️ Cannot send typing indicator - not connected or missing roomId');
+      return false;
+    }
     
+    this.log(`⌨️ Sending typing indicator to room ${roomId}: ${isTyping}`);
     this.socket.emit('typing', { roomId: parseInt(roomId), isTyping });
     return true;
   }
 
   markMessagesAsRead(roomId) {
-    if (!roomId || !this.socket || !this.isConnected) return false;
+    if (!roomId || !this.socket || !this.isConnected) {
+      this.log('⚠️ Cannot mark messages as read - not connected or missing roomId');
+      return false;
+    }
     
     this.log('👁️ Marking messages as read for room:', roomId);
     this.socket.emit('markMessagesRead', { roomId: parseInt(roomId) });
     return true;
+  }
+
+  getConnectionStatus() {
+    return this.isConnected && this.socket?.connected;
+  }
+
+  forceReconnect() {
+    this.log('🔄 Force reconnect requested');
+    this.reconnectAttempts = 0;
+    
+    if (this.lastToken) {
+      return this.connect(this.lastToken);
+    } else {
+      const state = this.getState();
+      const token = state?.auth?.token;
+      if (token) {
+        return this.connect(token);
+      } else {
+        this.error('❌ No token available for reconnection');
+        return Promise.resolve(false);
+      }
+    }
+  }
+
+  // UTILITY METHODS
+  _rejoinRooms() {
+    if (this.currentRooms.size > 0) {
+      this.log('🚪 Rejoining rooms:', Array.from(this.currentRooms));
+      setTimeout(() => {
+        this.currentRooms.forEach(roomId => {
+          this.joinRoom(roomId, false);
+        });
+      }, 1000);
+    }
+  }
+
+  _startPingInterval() {
+    this._stopPingInterval();
+    this.pingInterval = setInterval(() => {
+      if (this.isConnected && this.socket) {
+        this.ping({ heartbeat: true });
+      }
+    }, 30000);
+  }
+
+  _stopPingInterval() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
+  _cleanup() {
+    this._stopPingInterval();
+    
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.socket) {
+      try {
+        this.socket.removeAllListeners();
+        this.socket.disconnect();
+      } catch (error) {
+        this.error('❌ Error during socket cleanup:', error.message);
+      }
+      this.socket = null;
+    }
+    
+    this.isConnected = false;
+    this.updateConnectionStatus(false);
+  }
+
+  _scheduleReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.error('❌ Max reconnection attempts reached');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delay = Math.min(2000 * this.reconnectAttempts, 10000);
+    
+    this.log(`🔄 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+    
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.isConnected && this.lastToken) {
+        this.log('🔄 Attempting auto-reconnection...');
+        this.connect(this.lastToken);
+      }
+    }, delay);
+  }
+
+  _handleAuthError() {
+    this.error('❌ Authentication error, need fresh token');
+    
+    try {
+      const state = this.getState();
+      const newToken = state?.auth?.token;
+      
+      if (newToken && newToken !== this.lastToken) {
+        this.log('🔄 Retrying with fresh token');
+        setTimeout(() => {
+          this.connect(newToken);
+        }, 2000);
+      } else {
+        this.error('❌ No fresh token available');
+      }
+    } catch (err) {
+      this.error('❌ Failed to get fresh token:', err);
+    }
+  }
+
+  // EVENT LISTENER MANAGEMENT
+  addEventListener(event, callback) {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, new Set());
+    }
+    this.eventListeners.get(event).add(callback);
+    
+    return () => {
+      this.removeEventListener(event, callback);
+    };
+  }
+
+  removeEventListener(event, callback) {
+    if (this.eventListeners.has(event)) {
+      this.eventListeners.get(event).delete(callback);
+    }
+  }
+
+  _emitToListeners(event, data) {
+    if (this.eventListeners.has(event)) {
+      this.eventListeners.get(event).forEach(callback => {
+        try {
+          callback(data);
+        } catch (error) {
+          this.error(`❌ Error in event listener for ${event}:`, error);
+        }
+      });
+    }
   }
 
   ping(data = {}) {
@@ -761,6 +909,14 @@ class SocketService {
 
   disconnect() {
     this.log('🔌 Manual disconnect');
+    this.autoConnectEnabled = false; // Disable auto-connect
+    
+    // Clear auto-connect checker
+    if (this.autoConnectChecker) {
+      clearInterval(this.autoConnectChecker);
+      this.autoConnectChecker = null;
+    }
+    
     this.eventListeners.clear();
     this.currentRooms.clear();
     this.reconnectAttempts = 0;
@@ -770,39 +926,17 @@ class SocketService {
     this.processedMessageIds.clear();
     this.lastConnectedUser = null;
     this.lastConnectedToken = null;
-    this.autoConnectEnabled = false;
+    this.hasTriedInitialConnection = false;
     
-    this._cleanup();
-  }
-
-  // UTILITY METHODS
-  getConnectionStatus() {
-    return this.isConnected && this.socket?.connected;
-  }
-
-  getCurrentRooms() {
-    return Array.from(this.currentRooms);
-  }
-
-  forceReconnect() {
-    this.log('🔄 Force reconnect requested');
-    this.reconnectAttempts = 0;
-    
-    if (this.lastToken) {
-      return this.connect(this.lastToken);
-    } else {
-      const state = store.getState();
-      const token = state.auth?.token;
-      if (token) {
-        return this.connect(token);
-      } else {
-        this.error('❌ No token available for reconnection');
-        return Promise.resolve(false);
-      }
+    try {
+      this._cleanup();
+    } catch (error) {
+      this.error('❌ Error during manual disconnect:', error.message);
     }
   }
 
   getDebugInfo() {
+    const state = this.getState();
     return {
       isConnected: this.isConnected,
       socketConnected: this.socket?.connected,
@@ -813,100 +947,28 @@ class SocketService {
       serverUrl: getSocketUrl(),
       platform: Platform.OS,
       hasToken: !!this.lastToken,
+      hasStore: !!this.store,
       pendingMessages: this.pendingMessages.size,
       sentMessages: this.sentMessages.size,
       processedMessages: this.processedMessageIds.size,
       autoConnectEnabled: this.autoConnectEnabled,
       isAutoConnecting: this.isAutoConnecting,
+      hasTriedInitialConnection: this.hasTriedInitialConnection,
       lastConnectedUser: this.lastConnectedUser?.name || null,
       lastConnectedToken: this.lastConnectedToken ? this.lastConnectedToken.substring(0, 20) + '...' : null,
-      eventListeners: Object.fromEntries(
-        Array.from(this.eventListeners.entries()).map(([key, set]) => [key, set.size])
-      ),
-      transport: this.socket?.io?.engine?.transport?.name,
-      pingInterval: !!this.pingInterval
+      hasAutoConnectChecker: !!this.autoConnectChecker,
+      storeState: {
+        hasAuth: !!state?.auth,
+        hasUser: !!state?.auth?.user,
+        hasToken: !!state?.auth?.token,
+        isAuthenticated: !!state?.auth?.isAuthenticated,
+        userName: state?.auth?.user?.name
+      }
     };
-  }
-
-  healthCheck() {
-    const info = this.getDebugInfo();
-    this.log('🏥 Health Check:', info);
-    
-    if (this.isConnected) {
-      this.ping({ healthCheck: true });
-    }
-    
-    return info;
-  }
-
-  // Enable/disable auto-connection
-  setAutoConnectEnabled(enabled) {
-    this.autoConnectEnabled = enabled;
-    this.log('🔧 Auto-connect:', enabled ? 'enabled' : 'disabled');
   }
 }
 
+// Create singleton instance
 const socketService = new SocketService();
-
-// **FIXED AUTO-INITIALIZATION** - This is the main fix for auto-connection!
-let currentUser = null;
-let currentToken = null;
-let initializationTimer = null;
-
-const checkAndAutoInitialize = () => {
-  // Clear any existing timer
-  if (initializationTimer) {
-    clearTimeout(initializationTimer);
-  }
-
-  // Delay initialization to avoid rapid calls
-  initializationTimer = setTimeout(async () => {
-    try {
-      const state = store.getState();
-      const user = state.auth?.user;
-      const token = state.auth?.token;
-      
-      // Check if we have valid auth data
-      if (!user || !token) {
-        console.log('⚠️ No auth data for socket auto-initialization');
-        currentUser = null;
-        currentToken = null;
-        return;
-      }
-
-      // Check if user or token changed
-      const userChanged = !currentUser || currentUser.id !== user.id;
-      const tokenChanged = currentToken !== token;
-
-      if (userChanged || tokenChanged) {
-        console.log('🔄 Auth state changed, starting auto-initialization...', {
-          userChanged,
-          tokenChanged,
-          userId: user.id,
-          userName: user.name
-        });
-        
-        // Update tracking variables
-        currentUser = user;
-        currentToken = token;
-        
-        // Trigger auto-connection
-        await socketService.autoConnect();
-      }
-    } catch (error) {
-      console.error('❌ Auto-initialization error:', error);
-    }
-  }, 1000); // 1 second delay to debounce rapid state changes
-};
-
-// Listen to store changes for auto-initialization
-console.log('🔧 Setting up store subscription for socket auto-initialization');
-store.subscribe(checkAndAutoInitialize);
-
-// Initial check after a short delay
-setTimeout(() => {
-  console.log('🚀 Performing initial auto-initialization check...');
-  checkAndAutoInitialize();
-}, 2000);
 
 export default socketService;
